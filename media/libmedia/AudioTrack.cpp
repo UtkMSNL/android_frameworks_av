@@ -335,7 +335,8 @@ status_t AudioTrack::set(
         pid_t pid,
         const audio_attributes_t* pAttributes)
 {
-    ALOGV("set(): streamType %d, sampleRate %u, format %#x, channelMask %#x, frameCount %zu, "
+    //ALOGV("set(): streamType %d, sampleRate %u, format %#x, channelMask %#x, frameCount %zu, "
+    ALOGE("for audio test, set(): streamType %d, sampleRate %u, format %#x, channelMask %#x, frameCount %zu, "
           "flags #%x, notificationFrames %u, sessionId %d, transferType %d",
           streamType, sampleRate, format, channelMask, frameCount, flags, notificationFrames,
           sessionId, transferType);
@@ -1707,6 +1708,7 @@ status_t AudioTrack::obtainBuffer(Buffer* audioBuffer, const struct timespec *re
 
     audioBuffer->frameCount = buffer.mFrameCount;
     audioBuffer->size = buffer.mFrameCount * mFrameSizeAF;
+    ALOGE("for audio test, the request buffer count is: %d, size is: %d", buffer.mFrameCount, audioBuffer->size);
     audioBuffer->raw = buffer.mRaw;
     if (nonContig != NULL) {
         *nonContig = buffer.mNonContig;
