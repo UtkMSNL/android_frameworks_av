@@ -55,14 +55,17 @@ LOCAL_SRC_FILES:=               \
     Tracks.cpp                  \
     Effects.cpp                 \
     AudioMixer.cpp.arm          \
-    PatchPanel.cpp
+    PatchPanel.cpp              \
+    RpcAudioFlingerServer.cpp   \
+    RpcAudioFlinger.cpp
 
 LOCAL_SRC_FILES += StateQueue.cpp
 
 LOCAL_C_INCLUDES := \
     $(TOPDIR)frameworks/av/services/audiopolicy \
     $(call include-path-for, audio-effects) \
-    $(call include-path-for, audio-utils)
+    $(call include-path-for, audio-utils) \
+    external/stlport/stlport bionic/ bionic/libstdc++/include
 
 LOCAL_SHARED_LIBRARIES := \
     libaudioresampler \
@@ -78,7 +81,9 @@ LOCAL_SHARED_LIBRARIES := \
     libhardware_legacy \
     libeffects \
     libpowermanager \
-    libserviceutility
+    libserviceutility \
+    libsrpc \
+	libstlport
 
 LOCAL_STATIC_LIBRARIES := \
     libscheduling_policy \

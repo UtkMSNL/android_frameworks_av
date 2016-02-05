@@ -446,9 +446,11 @@ private:
     void dumpClients(int fd, const Vector<String16>& args);
     void dumpInternals(int fd, const Vector<String16>& args);
 
+public:
     // --- Client ---
     class Client : public RefBase {
     public:
+                            Client();
                             Client(const sp<AudioFlinger>& audioFlinger, pid_t pid);
         virtual             ~Client();
         sp<MemoryDealer>    heap() const;
@@ -469,6 +471,7 @@ private:
         int                 mTimedTrackCount;
     };
 
+private:
     // --- Notification Client ---
     class NotificationClient : public IBinder::DeathRecipient {
     public:
@@ -491,7 +494,9 @@ private:
         const sp<IAudioFlingerClient> mAudioFlingerClient;
     };
 
+public:
     class TrackHandle;
+private:
     class RecordHandle;
     class RecordThread;
     class PlaybackThread;
@@ -529,9 +534,11 @@ private:
 
 #include "PatchPanel.h"
 
+public:
     // server side of the client's IAudioTrack
     class TrackHandle : public android::BnAudioTrack {
     public:
+                            TrackHandle();
                             TrackHandle(const sp<PlaybackThread::Track>& track);
         virtual             ~TrackHandle();
         virtual sp<IMemory> getCblk() const;
@@ -557,6 +564,7 @@ private:
         const sp<PlaybackThread::Track> mTrack;
     };
 
+private:
     // server side of the client's IAudioRecord
     class RecordHandle : public android::BnAudioRecord {
     public:
