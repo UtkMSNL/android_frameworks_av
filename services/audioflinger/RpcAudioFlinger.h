@@ -39,7 +39,7 @@
 #define ANDROID_RPC_AUDIO_FLINGER_H
 
 #include "AudioFlinger.h"
-#include "RpcAudioCommon.h"
+#include <media/RpcAudioCommon.h>
 #include "rpc/share_rpc.h"
 
 namespace android {
