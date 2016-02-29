@@ -23,6 +23,8 @@
 #include <linux/futex.h>
 #include <sys/syscall.h>
 
+#include <rpc/sbuffer_sync.h>
+
 namespace android {
 
 // used to clamp a value to size_t.  TODO: move to another file.
@@ -108,7 +110,8 @@ status_t ClientProxy::obtainBuffer(Buffer* buffer, const struct timespec *reques
         goto end;
     }
     for (;;) {
-        int32_t flags = android_atomic_and(~CBLK_INTERRUPT, &cblk->mFlags);
+        //    flags = android_atomic_and(~CBLK_INTERRUPT, &cblk->mFlags);
+        int32_t flags = RpcBufferAtomicAnd(mCblk, &cblk->mFlags, ~CBLK_INTERRUPT);
         // check for track invalidation by server, or server death detection
         if (flags & CBLK_INVALID) {
             ALOGV("Track invalidated");
@@ -133,8 +136,13 @@ status_t ClientProxy::obtainBuffer(Buffer* buffer, const struct timespec *reques
             // However, the processor may support speculative execution,
             // and be unable to undo speculative writes into shared memory.
             // The barrier will prevent such speculative execution.
-            front = android_atomic_acquire_load(&cblk->u.mStreaming.mFront);
-            rear = cblk->u.mStreaming.mRear;
+            if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+                front = android_atomic_acquire_load(&cblk->u.mStreaming.mFront);
+                rear = cblk->u.mStreaming.mRear;
+            } else {
+                front = ReadRpcBuffer(mCblk, &cblk->u.mStreaming.mFront);
+                rear = ReadRpcBuffer(mCblk, &cblk->u.mStreaming.mRear);
+            }
         } else {
             // On the other hand, this barrier is required.
             rear = android_atomic_acquire_load(&cblk->u.mStreaming.mRear);
@@ -152,8 +160,14 @@ status_t ClientProxy::obtainBuffer(Buffer* buffer, const struct timespec *reques
             }
             // for input, sync up on overrun
             filled = 0;
-            cblk->u.mStreaming.mFront = rear;
-            (void) android_atomic_or(CBLK_OVERRUN, &cblk->mFlags);
+            if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+                cblk->u.mStreaming.mFront = rear;
+                (void) android_atomic_or(CBLK_OVERRUN, &cblk->mFlags);
+            } else {
+                volatile int32_t rearval = rear;
+                WriteRpcBuffer(mCblk, &cblk->u.mStreaming.mFront, &rearval);
+                RpcBufferAtomicOr(mCblk, &cblk->mFlags, CBLK_OVERRUN);
+            }
         }
         // don't allow filling pipe beyond the nominal size
         size_t avail = mIsOut ? mFrameCount - filled : filled;
@@ -224,15 +238,22 @@ status_t ClientProxy::obtainBuffer(Buffer* buffer, const struct timespec *reques
             ts = NULL;
             break;
         }
-        int32_t old = android_atomic_and(~CBLK_FUTEX_WAKE, &cblk->mFutex);
+        int32_t old = RpcBufferAtomicAnd(mCblk, &cblk->mFutex, ~CBLK_FUTEX_WAKE);
+            //old = android_atomic_and(~CBLK_FUTEX_WAKE, &cblk->mFutex);
+        ALOGE("rpc audio service obtain buffer with the wait value: %d", old);
         if (!(old & CBLK_FUTEX_WAKE)) {
             if (measure && !beforeIsValid) {
                 clock_gettime(CLOCK_MONOTONIC, &before);
                 beforeIsValid = true;
             }
             errno = 0;
-            (void) syscall(__NR_futex, &cblk->mFutex,
+            if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+               (void) syscall(__NR_futex, &cblk->mFutex,
                     mClientInServer ? FUTEX_WAIT_PRIVATE : FUTEX_WAIT, old & ~CBLK_FUTEX_WAKE, ts);
+            } else {
+                RpcBufferUtil::waitOnVal(mCblk, (int*) &cblk->mFutex, old & ~CBLK_FUTEX_WAKE, ts);
+            }
+            
             // update total elapsed time spent waiting
             if (measure) {
                 struct timespec after;
@@ -302,8 +323,28 @@ void ClientProxy::releaseBuffer(Buffer* buffer)
     audio_track_cblk_t* cblk = mCblk;
     // Both of these barriers are required
     if (mIsOut) {
-        int32_t rear = cblk->u.mStreaming.mRear;
-        android_atomic_release_store(stepCount + rear, &cblk->u.mStreaming.mRear);
+        if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+            int32_t rear = cblk->u.mStreaming.mRear;
+            android_atomic_release_store(stepCount + rear, &cblk->u.mStreaming.mRear);
+        } else {
+            // make an optimization for the first data sync since the play can only start when the buffer are all filled
+            if (cblk->u.mStreaming.mFront == 0 && (stepCount + cblk->u.mStreaming.mRear) - cblk->u.mStreaming.mFront < mFrameCount) { // buffer is not filled for the first, write only to local
+                int32_t rear = cblk->u.mStreaming.mRear;
+                android_atomic_release_store(stepCount + rear, &cblk->u.mStreaming.mRear);
+            } else if(cblk->u.mStreaming.mFront == 0) { // first buffer data sync
+                ALOGI("rpc audio service start the first data sync");
+                int32_t rear = cblk->u.mStreaming.mRear;
+                volatile int32_t val = stepCount + rear;
+                // synchronize the data to the remote server if share is enabled
+                // TODO: make sure that the synchronization size is correct
+                WriteRpcBuffer(mCblk, &cblk->u.mStreaming.mRear, &val, mBuffers, 0, (stepCount + rear - cblk->u.mStreaming.mFront) * mFrameSize);
+            } else {
+                int32_t rear = ReadRpcBuffer(mCblk, &cblk->u.mStreaming.mRear);
+                volatile int32_t val = stepCount + rear;
+                // synchronize the data to the remote server if share is enabled
+                WriteRpcBuffer(mCblk, &cblk->u.mStreaming.mRear, &val, mBuffers, (char*) buffer->mRaw - (char*) mBuffers, buffer->mFrameCount * mFrameSize);
+            }
+        }
     } else {
         int32_t front = cblk->u.mStreaming.mFront;
         android_atomic_release_store(stepCount + front, &cblk->u.mStreaming.mFront);
@@ -313,28 +354,42 @@ void ClientProxy::releaseBuffer(Buffer* buffer)
 void ClientProxy::binderDied()
 {
     audio_track_cblk_t* cblk = mCblk;
-    if (!(android_atomic_or(CBLK_INVALID, &cblk->mFlags) & CBLK_INVALID)) {
-        android_atomic_or(CBLK_FUTEX_WAKE, &cblk->mFutex);
-        // it seems that a FUTEX_WAKE_PRIVATE will not wake a FUTEX_WAIT, even within same process
-        (void) syscall(__NR_futex, &cblk->mFutex, mClientInServer ? FUTEX_WAKE_PRIVATE : FUTEX_WAKE,
-                1);
+    int32_t flags = RpcBufferAtomicOr(mCblk, &cblk->mFlags, CBLK_INVALID);
+    //    flags = android_atomic_or(CBLK_INVALID, &cblk->mFlags);
+    if (!(flags & CBLK_INVALID)) {
+        if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+            android_atomic_or(CBLK_FUTEX_WAKE, &cblk->mFutex);
+            // it seems that a FUTEX_WAKE_PRIVATE will not wake a FUTEX_WAIT, even within same process
+            (void) syscall(__NR_futex, &cblk->mFutex, mClientInServer ? FUTEX_WAKE_PRIVATE : FUTEX_WAKE,
+                    1);
+        } else {
+            RpcBufferAtomicOr(mCblk, &cblk->mFutex, CBLK_FUTEX_WAKE);
+            RpcBufferUtil::wakeLocal(mCblk, (int*) &cblk->mFutex);
+        }
     }
 }
 
 void ClientProxy::interrupt()
 {
     audio_track_cblk_t* cblk = mCblk;
-    if (!(android_atomic_or(CBLK_INTERRUPT, &cblk->mFlags) & CBLK_INTERRUPT)) {
-        android_atomic_or(CBLK_FUTEX_WAKE, &cblk->mFutex);
-        (void) syscall(__NR_futex, &cblk->mFutex, mClientInServer ? FUTEX_WAKE_PRIVATE : FUTEX_WAKE,
+    int32_t flags = RpcBufferAtomicOr(mCblk, &cblk->mFlags, CBLK_INTERRUPT);
+    //    flags = android_atomic_or(CBLK_INTERRUPT, &cblk->mFlags);
+    if (!(flags & CBLK_INTERRUPT)) {
+        if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+            android_atomic_or(CBLK_FUTEX_WAKE, &cblk->mFutex);
+            (void) syscall(__NR_futex, &cblk->mFutex, mClientInServer ? FUTEX_WAKE_PRIVATE : FUTEX_WAKE,
                 1);
+        } else {
+            RpcBufferAtomicOr(mCblk, &cblk->mFutex, CBLK_FUTEX_WAKE);
+            RpcBufferUtil::wakeLocal(mCblk, (int*) &cblk->mFutex);
+        }
     }
 }
 
 size_t ClientProxy::getMisalignment()
 {
     audio_track_cblk_t* cblk = mCblk;
-    return ((mFrameCountP2 - (mIsOut ? cblk->u.mStreaming.mRear : cblk->u.mStreaming.mFront))
+    return ((mFrameCountP2 - (mIsOut ? ReadRpcBuffer(mCblk, &cblk->u.mStreaming.mRear) : ReadRpcBuffer(mCblk, &cblk->u.mStreaming.mFront)))
            % mFrameCountP2);
 }
 
@@ -344,8 +399,13 @@ size_t ClientProxy::getFramesFilled() {
     int32_t rear;
 
     if (mIsOut) {
-        front = android_atomic_acquire_load(&cblk->u.mStreaming.mFront);
-        rear = cblk->u.mStreaming.mRear;
+        if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+            front = android_atomic_acquire_load(&cblk->u.mStreaming.mFront);
+            rear = cblk->u.mStreaming.mRear;
+        } else {
+            front = ReadRpcBuffer(mCblk, &cblk->u.mStreaming.mFront);
+            rear = ReadRpcBuffer(mCblk, &cblk->u.mStreaming.mRear);
+        }        
     } else {
         rear = android_atomic_acquire_load(&cblk->u.mStreaming.mRear);
         front = cblk->u.mStreaming.mFront;
@@ -367,17 +427,25 @@ void AudioTrackClientProxy::flush()
     size_t increment = mFrameCountP2 << 1;
     size_t mask = increment - 1;
     audio_track_cblk_t* cblk = mCblk;
-    int32_t newFlush = (cblk->u.mStreaming.mRear & mask) |
-                        ((cblk->u.mStreaming.mFlush & ~mask) + increment);
-    android_atomic_release_store(newFlush, &cblk->u.mStreaming.mFlush);
+    if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+        int32_t newFlush = (cblk->u.mStreaming.mRear & mask) |
+                            ((cblk->u.mStreaming.mFlush & ~mask) + increment);
+        android_atomic_release_store(newFlush, &cblk->u.mStreaming.mFlush);
+    } else {
+        volatile int32_t newFlush = (ReadRpcBuffer(mCblk, &cblk->u.mStreaming.mRear) & mask) |
+                            ((ReadRpcBuffer(mCblk, &cblk->u.mStreaming.mFlush) & ~mask) + increment);
+        WriteRpcBuffer(mCblk, &cblk->u.mStreaming.mFlush, &newFlush);
+    }
 }
 
 bool AudioTrackClientProxy::clearStreamEndDone() {
-    return (android_atomic_and(~CBLK_STREAM_END_DONE, &mCblk->mFlags) & CBLK_STREAM_END_DONE) != 0;
+    int32_t flags = RpcBufferAtomicAnd(mCblk, &mCblk->mFlags, ~CBLK_STREAM_END_DONE);
+        //flags = android_atomic_and(~CBLK_STREAM_END_DONE, &mCblk->mFlags);
+    return (flags & CBLK_STREAM_END_DONE) != 0;
 }
 
 bool AudioTrackClientProxy::getStreamEndDone() const {
-    return (mCblk->mFlags & CBLK_STREAM_END_DONE) != 0;
+    return (ReadRpcBuffer(mCblk, &mCblk->mFlags) & CBLK_STREAM_END_DONE) != 0;
 }
 
 status_t AudioTrackClientProxy::waitStreamEndDone(const struct timespec *requested)
@@ -403,7 +471,8 @@ status_t AudioTrackClientProxy::waitStreamEndDone(const struct timespec *request
         timeout = TIMEOUT_FINITE;
     }
     for (;;) {
-        int32_t flags = android_atomic_and(~(CBLK_INTERRUPT|CBLK_STREAM_END_DONE), &cblk->mFlags);
+        int32_t flags = RpcBufferAtomicAnd(mCblk, &cblk->mFlags, ~(CBLK_INTERRUPT|CBLK_STREAM_END_DONE));
+        //    flags = android_atomic_and(~(CBLK_INTERRUPT|CBLK_STREAM_END_DONE), &cblk->mFlags);
         // check for track invalidation by server, or server death detection
         if (flags & CBLK_INVALID) {
             ALOGV("Track invalidated");
@@ -461,11 +530,16 @@ status_t AudioTrackClientProxy::waitStreamEndDone(const struct timespec *request
             ts = NULL;
             break;
         }
-        int32_t old = android_atomic_and(~CBLK_FUTEX_WAKE, &cblk->mFutex);
+        int32_t old = RpcBufferAtomicAnd(mCblk, &cblk->mFutex, ~CBLK_FUTEX_WAKE);
+        //    old = android_atomic_and(~CBLK_FUTEX_WAKE, &cblk->mFutex);
         if (!(old & CBLK_FUTEX_WAKE)) {
             errno = 0;
-            (void) syscall(__NR_futex, &cblk->mFutex,
+            if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+               (void) syscall(__NR_futex, &cblk->mFutex,
                     mClientInServer ? FUTEX_WAIT_PRIVATE : FUTEX_WAIT, old & ~CBLK_FUTEX_WAKE, ts);
+            } else {
+                RpcBufferUtil::waitOnVal(mCblk, (int*) &cblk->mFutex, old & ~CBLK_FUTEX_WAKE, ts);
+            }
             switch (errno) {
             case 0:            // normal wakeup by server, or by binderDied()
             case EWOULDBLOCK:  // benign race condition with server
@@ -524,7 +598,7 @@ size_t StaticAudioTrackClientProxy::getBufferPosition()
 {
     size_t bufferPosition;
     if (mMutator.ack()) {
-        bufferPosition = (size_t) mCblk->u.mStatic.mBufferPosition;
+        bufferPosition = (size_t) ReadRpcBuffer(mCblk, &mCblk->u.mStatic.mBufferPosition);
         if (bufferPosition > mFrameCount) {
             bufferPosition = mFrameCount;
         }
@@ -557,9 +631,14 @@ status_t ServerProxy::obtainBuffer(Buffer* buffer, bool ackFlush)
     int32_t rear;
     // See notes on barriers at ClientProxy::obtainBuffer()
     if (mIsOut) {
-        int32_t flush = cblk->u.mStreaming.mFlush;
-        rear = android_atomic_acquire_load(&cblk->u.mStreaming.mRear);
-        front = cblk->u.mStreaming.mFront;
+        int32_t flush = ReadRpcBuffer(mCblk, &cblk->u.mStreaming.mFlush);
+        if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+            rear = android_atomic_acquire_load(&cblk->u.mStreaming.mRear);
+            front = cblk->u.mStreaming.mFront;
+        } else {
+            rear = ReadRpcBuffer(mCblk, &cblk->u.mStreaming.mRear);
+            front = ReadRpcBuffer(mCblk, &cblk->u.mStreaming.mFront);
+        }
         if (flush != mFlush) {
             // effectively obtain then release whatever is in the buffer
             size_t mask = (mFrameCountP2 << 1) - 1;
@@ -572,13 +651,23 @@ status_t ServerProxy::obtainBuffer(Buffer* buffer, bool ackFlush)
                 newFront = rear;
             }
             mFlush = flush;
-            android_atomic_release_store(newFront, &cblk->u.mStreaming.mFront);
+            if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+                android_atomic_release_store(newFront, &cblk->u.mStreaming.mFront);
+            } else {
+                volatile int32_t newFrontVal = newFront;
+                WriteRpcBuffer(mCblk, &cblk->u.mStreaming.mFront, &newFrontVal);
+            }
             // There is no danger from a false positive, so err on the side of caution
             if (true /*front != newFront*/) {
-                int32_t old = android_atomic_or(CBLK_FUTEX_WAKE, &cblk->mFutex);
+                int32_t old = RpcBufferAtomicOr(mCblk, &cblk->mFutex, CBLK_FUTEX_WAKE);
+                //    old = android_atomic_or(CBLK_FUTEX_WAKE, &cblk->mFutex);
                 if (!(old & CBLK_FUTEX_WAKE)) {
-                    (void) syscall(__NR_futex, &cblk->mFutex,
-                            mClientInServer ? FUTEX_WAKE_PRIVATE : FUTEX_WAKE, 1);
+                    if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+                        (void) syscall(__NR_futex, &cblk->mFutex,
+                                mClientInServer ? FUTEX_WAKE_PRIVATE : FUTEX_WAKE, 1);
+                    } else {
+                        RpcBufferUtil::wakeRemote(mCblk, (int*) &cblk->mFutex);
+                    }
                 }
             }
             front = newFront;
@@ -660,20 +749,41 @@ void ServerProxy::releaseBuffer(Buffer* buffer)
     mUnreleased -= stepCount;
     audio_track_cblk_t* cblk = mCblk;
     if (mIsOut) {
-        int32_t front = cblk->u.mStreaming.mFront;
-        android_atomic_release_store(stepCount + front, &cblk->u.mStreaming.mFront);
+        if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+            int32_t front = cblk->u.mStreaming.mFront;
+            android_atomic_release_store(stepCount + front, &cblk->u.mStreaming.mFront);
+        } else {
+            // FIXME: if the requested buffer size is too small, we wait until next time to do front value synchronization, only when the unsynced value is larger than the round trip we will synchronize
+            // try the optimization of the frequency of synchronizing mfront
+            //ALOGE("rpc audio service stepcount: %d, %d, %d", stepCount, cblk->mSampleRate, (stepCount * 1000) / cblk->mSampleRate);
+            int rtt = 20;
+            if ((stepCount * 1000) / cblk->mSampleRate < rtt) {
+                int32_t front = cblk->u.mStreaming.mFront;
+                android_atomic_release_store(stepCount + front, &cblk->u.mStreaming.mFront);
+            } else {
+                int32_t front = ReadRpcBuffer(mCblk, &cblk->u.mStreaming.mFront);
+                volatile int32_t val = stepCount + front;
+                WriteRpcBuffer(mCblk, &cblk->u.mStreaming.mFront, &val);
+            }
+        }
     } else {
         int32_t rear = cblk->u.mStreaming.mRear;
         android_atomic_release_store(stepCount + rear, &cblk->u.mStreaming.mRear);
     }
 
-    cblk->mServer += stepCount;
+    if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+        cblk->mServer += stepCount;
+    } else {
+        uint32_t val = ReadRpcBuffer(mCblk, &cblk->mServer);
+        val += stepCount;
+        WriteRpcBuffer(mCblk, &cblk->mServer, &val);
+    }
 
     size_t half = mFrameCount / 2;
     if (half == 0) {
         half = 1;
     }
-    size_t minimum = (size_t) cblk->mMinimum;
+    size_t minimum = (size_t) ReadRpcBuffer(mCblk, &cblk->mMinimum);
     if (minimum == 0) {
         minimum = mIsOut ? half : 1;
     } else if (minimum > half) {
@@ -682,10 +792,17 @@ void ServerProxy::releaseBuffer(Buffer* buffer)
     // FIXME AudioRecord wakeup needs to be optimized; it currently wakes up client every time
     if (!mIsOut || (mAvailToClient + stepCount >= minimum)) {
         ALOGV("mAvailToClient=%zu stepCount=%zu minimum=%zu", mAvailToClient, stepCount, minimum);
-        int32_t old = android_atomic_or(CBLK_FUTEX_WAKE, &cblk->mFutex);
+        int32_t old = RpcBufferAtomicOr(mCblk, &cblk->mFutex, CBLK_FUTEX_WAKE);
+        //ALOGE("rpc audio service start in release buffer ready to wake, %d, %d, %d, old: %d", mAvailToClient, stepCount, minimum, old);
+        //    old = android_atomic_or(CBLK_FUTEX_WAKE, &cblk->mFutex);
         if (!(old & CBLK_FUTEX_WAKE)) {
-            (void) syscall(__NR_futex, &cblk->mFutex,
+            if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+                (void) syscall(__NR_futex, &cblk->mFutex,
                     mClientInServer ? FUTEX_WAKE_PRIVATE : FUTEX_WAKE, 1);
+            } else {
+                ALOGE("rpc audio service see if need to wake the old is: %d", old);
+                RpcBufferUtil::wakeRemote(mCblk, (int*) &cblk->mFutex);
+            }
         }
     }
 
@@ -705,14 +822,23 @@ size_t AudioTrackServerProxy::framesReady()
     }
     audio_track_cblk_t* cblk = mCblk;
 
-    int32_t flush = cblk->u.mStreaming.mFlush;
+    int32_t flush = ReadRpcBuffer(mCblk, &cblk->u.mStreaming.mFlush);
     if (flush != mFlush) {
         // FIXME should return an accurate value, but over-estimate is better than under-estimate
         return mFrameCount;
     }
     // the acquire might not be necessary since not doing a subsequent read
-    int32_t rear = android_atomic_acquire_load(&cblk->u.mStreaming.mRear);
-    ssize_t filled = rear - cblk->u.mStreaming.mFront;
+    int32_t rear;
+    ssize_t filled;
+    if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+        rear = android_atomic_acquire_load(&cblk->u.mStreaming.mRear);
+        filled = rear - cblk->u.mStreaming.mFront;
+    } else {
+        rear = ReadRpcBuffer(mCblk, &cblk->u.mStreaming.mRear);
+        int32_t front = ReadRpcBuffer(mCblk, &cblk->u.mStreaming.mFront);
+        filled = rear - front;
+        //ALOGE("rpc audio service framesReady value is: %d, front: %d, rear: %d", filled, front, rear);
+    }
     // pipe should not already be overfull
     if (!(0 <= filled && (size_t) filled <= mFrameCount)) {
         ALOGE("Shared memory control block is corrupt (filled=%zd); shutting down", filled);
@@ -727,11 +853,17 @@ size_t AudioTrackServerProxy::framesReady()
 
 bool  AudioTrackServerProxy::setStreamEndDone() {
     audio_track_cblk_t* cblk = mCblk;
+    int32_t flags = RpcBufferAtomicOr(mCblk, &cblk->mFlags, CBLK_STREAM_END_DONE);
+    //    flags = android_atomic_or(CBLK_STREAM_END_DONE, &cblk->mFlags);
     bool old =
-            (android_atomic_or(CBLK_STREAM_END_DONE, &cblk->mFlags) & CBLK_STREAM_END_DONE) != 0;
+            (flags & CBLK_STREAM_END_DONE) != 0;
     if (!old) {
-        (void) syscall(__NR_futex, &cblk->mFutex, mClientInServer ? FUTEX_WAKE_PRIVATE : FUTEX_WAKE,
+        if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+            (void) syscall(__NR_futex, &cblk->mFutex, mClientInServer ? FUTEX_WAKE_PRIVATE : FUTEX_WAKE,
                 1);
+        } else {
+            RpcBufferUtil::wakeRemote(mCblk, (int*) &cblk->mFutex);
+        }
     }
     return old;
 }
@@ -739,10 +871,17 @@ bool  AudioTrackServerProxy::setStreamEndDone() {
 void AudioTrackServerProxy::tallyUnderrunFrames(uint32_t frameCount)
 {
     audio_track_cblk_t* cblk = mCblk;
-    cblk->u.mStreaming.mUnderrunFrames += frameCount;
+    if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+        cblk->u.mStreaming.mUnderrunFrames += frameCount;
+    } else {
+        volatile uint32_t val = ReadRpcBuffer(mCblk, &cblk->u.mStreaming.mUnderrunFrames);
+        val += frameCount;
+        WriteRpcBuffer(mCblk, &cblk->u.mStreaming.mUnderrunFrames, &val);
+    }
 
     // FIXME also wake futex so that underrun is noticed more quickly
-    (void) android_atomic_or(CBLK_UNDERRUN, &cblk->mFlags);
+    RpcBufferAtomicOr(mCblk, &cblk->mFlags, CBLK_UNDERRUN);
+    //    (void) android_atomic_or(CBLK_UNDERRUN, &cblk->mFlags);
 }
 
 // ---------------------------------------------------------------------------
@@ -819,7 +958,7 @@ ssize_t StaticAudioTrackServerProxy::pollPosition()
         }
         mFramesReadySafe = clampToSize(mFramesReady);
         // This may overflow, but client is not supposed to rely on it
-        mCblk->u.mStatic.mBufferPosition = (uint32_t) position;
+        WriteRpcBuffer(mCblk, &mCblk->u.mStatic.mBufferPosition, &position);
     }
     return (ssize_t) position;
 }
@@ -902,12 +1041,20 @@ void StaticAudioTrackServerProxy::releaseBuffer(Buffer* buffer)
     }
     mFramesReadySafe = clampToSize(mFramesReady);
 
-    cblk->mServer += stepCount;
-    // This may overflow, but client is not supposed to rely on it
-    cblk->u.mStatic.mBufferPosition = (uint32_t) newPosition;
+    if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+        cblk->mServer += stepCount;
+        // This may overflow, but client is not supposed to rely on it
+        cblk->u.mStatic.mBufferPosition = (uint32_t) newPosition;
+    } else {
+        uint32_t val = ReadRpcBuffer(mCblk, &cblk->mServer);
+        val += stepCount;
+        WriteRpcBuffer(mCblk, &cblk->mServer, &val);
+        WriteRpcBuffer(mCblk, &cblk->u.mStatic.mBufferPosition, &newPosition);
+    }
     if (setFlags != 0) {
-        (void) android_atomic_or(setFlags, &cblk->mFlags);
         // this would be a good place to wake a futex
+        RpcBufferAtomicOr(mCblk, &cblk->mFlags, setFlags);
+        //    (void) android_atomic_or(setFlags, &cblk->mFlags);
     }
 
     buffer->mFrameCount = 0;
@@ -923,7 +1070,8 @@ void StaticAudioTrackServerProxy::tallyUnderrunFrames(uint32_t frameCount __unus
     // possible for static buffer tracks other than at end of buffer, so this is not a loss.
 
     // FIXME also wake futex so that underrun is noticed more quickly
-    (void) android_atomic_or(CBLK_UNDERRUN, &mCblk->mFlags);
+    RpcBufferAtomicOr(mCblk, &mCblk->mFlags, CBLK_UNDERRUN);
+    //    (void) android_atomic_or(CBLK_UNDERRUN, &mCblk->mFlags);
 }
 
 // ---------------------------------------------------------------------------

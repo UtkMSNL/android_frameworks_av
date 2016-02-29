@@ -97,6 +97,9 @@
 #include "postpro_patch.h"
 #endif
 
+#include <rpc/sbuffer_sync.h>
+#include "time.h" 
+
 // ----------------------------------------------------------------------------
 
 // Note: the following macro is used for extremely verbose logging message.  In
@@ -3461,10 +3464,15 @@ void AudioFlinger::MixerThread::threadLoop_sleepTime()
 }
 
 // prepareTracks_l() must be called with ThreadBase::mLock held
+struct timeval lastTime; 
+    
 AudioFlinger::PlaybackThread::mixer_state AudioFlinger::MixerThread::prepareTracks_l(
         Vector< sp<Track> > *tracksToRemove)
 {
-
+    struct timeval thisTime; 
+    gettimeofday(&thisTime, NULL);
+    ALOGI("rpc audio service the interval for track mixer %ld", (thisTime.tv_sec - lastTime.tv_sec) * 1000000 + thisTime.tv_usec - lastTime.tv_usec);
+    lastTime = thisTime;
     mixer_state mixerStatus = MIXER_IDLE;
     // find out which tracks need to be processed
     size_t count = mActiveTracks.size();
@@ -3589,7 +3597,8 @@ AudioFlinger::PlaybackThread::mixer_state AudioFlinger::MixerThread::prepareTrac
                     }
                     // indicate to client process that the track was disabled because of underrun;
                     // it will then automatically call start() when data is available
-                    android_atomic_or(CBLK_DISABLED, &track->mCblk->mFlags);
+                    RpcBufferAtomicOr(track->mCblk, &track->mCblk->mFlags, CBLK_DISABLED);
+                    //    android_atomic_or(CBLK_DISABLED, &track->mCblk->mFlags);
                     // remove from active list, but state remains ACTIVE [confusing but true]
                     isActive = false;
                     break;
@@ -3701,6 +3710,7 @@ AudioFlinger::PlaybackThread::mixer_state AudioFlinger::MixerThread::prepareTrac
         }
 
         size_t framesReady = track->framesReady();
+        //ALOGE("rpc audio service the track handle is: %d, desired frames: %d, min frames: %d, framesReady: %d, name: %d, mRetryCount: %d, val is: %d, each %d, %d, %d, %d", track, desiredFrames, minFrames, framesReady, name, track->mRetryCount, ((framesReady >= minFrames) && track->isReady() && !track->isPaused() && !track->isTerminated()), (framesReady >= minFrames), track->isReady(), !track->isPaused(), !track->isTerminated());
         if ((framesReady >= minFrames) && track->isReady() &&
                 !track->isPaused() && !track->isTerminated())
         {
@@ -3738,7 +3748,7 @@ AudioFlinger::PlaybackThread::mixer_state AudioFlinger::MixerThread::prepareTrac
                 }
                 mAudioMixer->setParameter(name, AudioMixer::RESAMPLE, AudioMixer::RESET, NULL);
             // FIXME should not make a decision based on mServer
-            } else if (cblk->mServer != 0) {
+            } else if (ReadRpcBuffer(cblk, &cblk->mServer) != 0) {
                 // If the track is stopped before the first frame was mixed,
                 // do not apply ramp
                 param = AudioMixer::RAMP_VOLUME;
@@ -3933,7 +3943,8 @@ AudioFlinger::PlaybackThread::mixer_state AudioFlinger::MixerThread::prepareTrac
                     tracksToRemove->add(track);
                     // indicate to client process that the track was disabled because of underrun;
                     // it will then automatically call start() when data is available
-                    android_atomic_or(CBLK_DISABLED, &cblk->mFlags);
+                    RpcBufferAtomicOr(cblk, &cblk->mFlags, CBLK_DISABLED);
+                    //    android_atomic_or(CBLK_DISABLED, &cblk->mFlags);
                 // If one track is not ready, mark the mixer also not ready if:
                 //  - the mixer was ready during previous round OR
                 //  - no other track is ready
@@ -4525,7 +4536,8 @@ AudioFlinger::PlaybackThread::mixer_state AudioFlinger::DirectOutputThread::prep
                     tracksToRemove->add(track);
                     // indicate to client process that the track was disabled because of underrun;
                     // it will then automatically call start() when data is available
-                    android_atomic_or(CBLK_DISABLED, &cblk->mFlags);
+                    RpcBufferAtomicOr(cblk, &cblk->mFlags, CBLK_DISABLED);
+                    //    android_atomic_or(CBLK_DISABLED, &cblk->mFlags);
                 } else if (last) {
                     mixerStatus = MIXER_TRACKS_ENABLED;
                     if (usesHwAvSync() && !mHwPaused && !mStandby) {
@@ -5062,7 +5074,8 @@ AudioFlinger::PlaybackThread::mixer_state AudioFlinger::OffloadThread::prepareTr
                     tracksToRemove->add(track);
                     // indicate to client process that the track was disabled because of underrun;
                     // it will then automatically call start() when data is available
-                    android_atomic_or(CBLK_DISABLED, &cblk->mFlags);
+                    RpcBufferAtomicOr(cblk, &cblk->mFlags, CBLK_DISABLED);
+                    //    android_atomic_or(CBLK_DISABLED, &cblk->mFlags);
                 } else if (last){
                     mixerStatus = MIXER_TRACKS_ENABLED;
                 }

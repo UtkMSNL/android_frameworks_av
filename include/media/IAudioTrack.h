@@ -93,6 +93,9 @@ public:
 
     /* Signal the playback thread for a change in control block */
     virtual void        signal() = 0;
+    
+    /* set up the rpc buffer synchronization information */
+    virtual void        setupRpcBufferSync(uint32_t lctlAddr, uint32_t lbufAddr, uint32_t* rctlAddr, uint32_t* rbufAddr, int socketFdInServer) = 0;
 };
 
 // ----------------------------------------------------------------------------

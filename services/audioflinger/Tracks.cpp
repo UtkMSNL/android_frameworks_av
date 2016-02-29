@@ -59,6 +59,8 @@
 #include <media/AudioParameter.h>
 #endif // DOLBY_UDC
 
+#include <rpc/sbuffer_sync.h>
+
 // ----------------------------------------------------------------------------
 
 // Note: the following macro is used for extremely verbose logging message.  In
@@ -383,6 +385,25 @@ void AudioFlinger::TrackHandle::signal()
     return mTrack->signal();
 }
 
+void AudioFlinger::TrackHandle::setupRpcBufferSync(uint32_t lctlAddr, uint32_t lbufAddr, uint32_t* rctlAddr, uint32_t* rbufAddr, int socketFdInServer)
+{
+    // assign the control and buffer address to the arguments
+    *rctlAddr = (uint32_t) mTrack->cblk();
+    *rbufAddr = (uint32_t) mTrack->buffer();
+    // establish the mapping between the client app buffer address and the server audio service buffer
+    RpcBufferUtil::pushAddrMap(*rctlAddr, lctlAddr);
+    RpcBufferUtil::pushAddrMap(*rbufAddr, lbufAddr);
+    // setup the control block description information
+    int ctlSize = sizeof(audio_track_cblk_t);
+    SyncDescriptor* syncdes = new SyncDescriptor(ctlSize);
+    syncdes->socketFd = socketFdInServer;
+    int sz = (ctlSize - 1) / (sizeof(u4) * 8) + 1;
+    memset(syncdes->owner, 0xff, sz);
+    int frontOffset = (char*) &mTrack->cblk()->u.mStreaming.mFront - (char*) mTrack->cblk();
+    setBit(frontOffset, syncdes->wthrough, 1);
+    RpcBufferUtil::pushSyncDesc(mTrack->cblk(), syncdes);
+}
+
 status_t AudioFlinger::TrackHandle::onTransact(
     uint32_t code, const Parcel& data, Parcel* reply, uint32_t flags)
 {
@@ -667,11 +688,11 @@ bool AudioFlinger::PlaybackThread::Track::isReady() const {
         }
         return true;
     }
-
     if (framesReady() >= mFrameCount ||
-            (mCblk->mFlags & CBLK_FORCEREADY)) {
+            (ReadRpcBuffer(mCblk, &mCblk->mFlags) & CBLK_FORCEREADY)) {
         mFillingUpStatus = FS_FILLED;
-        android_atomic_and(~CBLK_FORCEREADY, &mCblk->mFlags);
+        RpcBufferAtomicAnd(mCblk, &mCblk->mFlags, ~CBLK_FORCEREADY);
+        //    android_atomic_and(~CBLK_FORCEREADY, &mCblk->mFlags);
         return true;
     }
     return false;
@@ -885,10 +906,17 @@ void AudioFlinger::PlaybackThread::Track::signalError()
 
     // FIXME should use proxy, and needs work
     audio_track_cblk_t* cblk = mCblk;
-    android_atomic_or(CBLK_STREAM_FATAL_ERROR, &cblk->mFlags);
-    android_atomic_release_store(0x40000000, &cblk->mFutex);
-    // client is not in server, so FUTEX_WAKE is needed instead of FUTEX_WAKE_PRIVATE
-    (void) syscall(__NR_futex, &cblk->mFutex, FUTEX_WAKE, INT_MAX);
+    if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+        android_atomic_or(CBLK_STREAM_FATAL_ERROR, &cblk->mFlags);
+        android_atomic_release_store(0x40000000, &cblk->mFutex);
+        // client is not in server, so FUTEX_WAKE is needed instead of FUTEX_WAKE_PRIVATE
+        (void) syscall(__NR_futex, &cblk->mFutex, FUTEX_WAKE, INT_MAX);
+    } else {
+        RpcBufferAtomicOr(mCblk, &cblk->mFlags, CBLK_STREAM_FATAL_ERROR);
+        volatile int32_t fuval = 0x40000000;
+        WriteRpcBuffer(mCblk, &cblk->mFutex, &fuval);
+        RpcBufferUtil::wakeRemote(mCblk, (int*) &cblk->mFutex);
+    }
 }
 
 void AudioFlinger::PlaybackThread::Track::reset()
@@ -898,7 +926,8 @@ void AudioFlinger::PlaybackThread::Track::reset()
     if (!mResetDone) {
         // Force underrun condition to avoid false underrun callback until first data is
         // written to buffer
-        android_atomic_and(~CBLK_FORCEREADY, &mCblk->mFlags);
+        RpcBufferAtomicAnd(mCblk, &mCblk->mFlags, ~CBLK_FORCEREADY);
+        //    android_atomic_and(~CBLK_FORCEREADY, &mCblk->mFlags);
         mFillingUpStatus = FS_FILLING;
         mResetDone = true;
         if (mState == FLUSHED) {
@@ -1135,10 +1164,17 @@ void AudioFlinger::PlaybackThread::Track::invalidate()
 {
     // FIXME should use proxy, and needs work
     audio_track_cblk_t* cblk = mCblk;
-    android_atomic_or(CBLK_INVALID, &cblk->mFlags);
-    android_atomic_release_store(0x40000000, &cblk->mFutex);
-    // client is not in server, so FUTEX_WAKE is needed instead of FUTEX_WAKE_PRIVATE
-    (void) syscall(__NR_futex, &cblk->mFutex, FUTEX_WAKE, INT_MAX);
+    if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+        android_atomic_or(CBLK_INVALID, &cblk->mFlags);
+        android_atomic_release_store(0x40000000, &cblk->mFutex);
+        // client is not in server, so FUTEX_WAKE is needed instead of FUTEX_WAKE_PRIVATE
+        (void) syscall(__NR_futex, &cblk->mFutex, FUTEX_WAKE, INT_MAX);
+    } else {
+        RpcBufferAtomicOr(mCblk, &cblk->mFlags, CBLK_INVALID);
+        volatile int32_t fuval = 0x40000000;
+        WriteRpcBuffer(mCblk, &cblk->mFutex, &fuval);
+        RpcBufferUtil::wakeRemote(mCblk, (int*) &cblk->mFutex);
+    }
     mIsInvalid = true;
 }
 
@@ -1982,11 +2018,13 @@ status_t AudioFlinger::PlaybackThread::PatchTrack::obtainBuffer(Proxy::Buffer* b
 void AudioFlinger::PlaybackThread::PatchTrack::releaseBuffer(Proxy::Buffer* buffer)
 {
     mProxy->releaseBuffer(buffer);
-    if (android_atomic_and(~CBLK_DISABLED, &mCblk->mFlags) & CBLK_DISABLED) {
+    if (RpcBufferAtomicAnd(mCblk, &mCblk->mFlags, ~CBLK_DISABLED) & CBLK_DISABLED) {
+    //    if (android_atomic_and(~CBLK_DISABLED, &mCblk->mFlags) & CBLK_DISABLED) {
         ALOGW("PatchTrack::releaseBuffer() disabled due to previous underrun, restarting");
         start();
     }
-    android_atomic_or(CBLK_FORCEREADY, &mCblk->mFlags);
+    RpcBufferAtomicOr(mCblk, &mCblk->mFlags, CBLK_FORCEREADY);
+    //android_atomic_or(CBLK_FORCEREADY, &mCblk->mFlags);
 }
 
 // ----------------------------------------------------------------------------
@@ -2097,7 +2135,8 @@ status_t AudioFlinger::RecordThread::RecordTrack::getNextBuffer(AudioBufferProvi
     buffer->raw = buf.mRaw;
     if (buf.mFrameCount == 0) {
         // FIXME also wake futex so that overrun is noticed more quickly
-        (void) android_atomic_or(CBLK_OVERRUN, &mCblk->mFlags);
+        RpcBufferAtomicOr(mCblk, &mCblk->mFlags, CBLK_OVERRUN);
+        //    (void) android_atomic_or(CBLK_OVERRUN, &mCblk->mFlags);
     }
     return status;
 }
@@ -2149,10 +2188,17 @@ void AudioFlinger::RecordThread::RecordTrack::invalidate()
 {
     // FIXME should use proxy, and needs work
     audio_track_cblk_t* cblk = mCblk;
-    android_atomic_or(CBLK_INVALID, &cblk->mFlags);
-    android_atomic_release_store(0x40000000, &cblk->mFutex);
-    // client is not in server, so FUTEX_WAKE is needed instead of FUTEX_WAKE_PRIVATE
-    (void) syscall(__NR_futex, &cblk->mFutex, FUTEX_WAKE, INT_MAX);
+    if (!RpcBufferUtil::isRemoteShared(mCblk)) {
+        android_atomic_or(CBLK_INVALID, &cblk->mFlags);
+        android_atomic_release_store(0x40000000, &cblk->mFutex);
+        // client is not in server, so FUTEX_WAKE is needed instead of FUTEX_WAKE_PRIVATE
+        (void) syscall(__NR_futex, &cblk->mFutex, FUTEX_WAKE, INT_MAX);
+    } else {
+        RpcBufferAtomicOr(mCblk, &cblk->mFlags, CBLK_INVALID);
+        volatile int32_t fuval = 0x40000000;
+        WriteRpcBuffer(mCblk, &cblk->mFutex, &fuval);
+        RpcBufferUtil::wakeRemote(mCblk, (int*) &cblk->mFutex);
+    }
 }
 
 

@@ -42,6 +42,7 @@ enum {
     SET_PARAMETERS,
     GET_TIMESTAMP,
     SIGNAL,
+    SETUP_RPC_BUFFER_SYNC,
 };
 
 class BpAudioTrack : public BpInterface<IAudioTrack>
@@ -195,6 +196,21 @@ public:
         data.writeInterfaceToken(IAudioTrack::getInterfaceDescriptor());
         remote()->transact(SIGNAL, data, &reply);
     }
+    
+    virtual void setupRpcBufferSync(uint32_t lctlAddr, uint32_t lbufAddr, uint32_t* rctlAddr, uint32_t* rbufAddr, int socketFdInServer) {
+        Parcel data, reply;
+        data.writeInterfaceToken(IAudioTrack::getInterfaceDescriptor());
+        data.writeInt32(lctlAddr);
+        data.writeInt32(lbufAddr);
+        data.writeInt32(socketFdInServer);
+        status_t status = remote()->transact(SETUP_RPC_BUFFER_SYNC, data, &reply);
+        if (status == NO_ERROR) {
+            *rctlAddr = reply.readInt32();
+            *rbufAddr = reply.readInt32();
+        } else {
+            ALOGW("setupRpcBufferSync() error: %s", strerror(-status));
+        }
+    }
 };
 
 IMPLEMENT_META_INTERFACE(AudioTrack, "android.media.IAudioTrack");
@@ -285,6 +301,18 @@ status_t BnAudioTrack::onTransact(
         case SIGNAL: {
             CHECK_INTERFACE(IAudioTrack, data, reply);
             signal();
+            return NO_ERROR;
+        } break;
+        case SETUP_RPC_BUFFER_SYNC: {
+            CHECK_INTERFACE(IAudioTrack, data, reply);
+            uint32_t lctlAddr = data.readInt32();
+            uint32_t lbufAddr = data.readInt32();
+            int socketFdInServer = data.readInt32();
+            uint32_t rctlAddr;
+            uint32_t rbufAddr;
+            setupRpcBufferSync(lctlAddr, lbufAddr, &rctlAddr, &rbufAddr, socketFdInServer);
+            reply->writeInt32(rctlAddr);
+            reply->writeInt32(rbufAddr);
             return NO_ERROR;
         } break;
         default:

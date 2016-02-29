@@ -77,7 +77,9 @@ include $(CLEAR_VARS)
 
 LOCAL_SRC_FILES:= \
     AudioPolicyService.cpp \
-    AudioPolicyEffects.cpp
+    AudioPolicyEffects.cpp \
+    RpcAudioPolicyService.cpp \
+    RpcAudioPolicyServiceServer.cpp
 
 ifeq ($(USE_LEGACY_AUDIO_POLICY), 1)
 LOCAL_SRC_FILES += \
@@ -94,7 +96,8 @@ endif
 LOCAL_C_INCLUDES := \
     $(TOPDIR)frameworks/av/services/audioflinger \
     $(call include-path-for, audio-effects) \
-    $(call include-path-for, audio-utils)
+    $(call include-path-for, audio-utils) \
+    external/stlport/stlport bionic/ bionic/libstdc++/include
 
 LOCAL_SHARED_LIBRARIES := \
     libcutils \
@@ -104,7 +107,9 @@ LOCAL_SHARED_LIBRARIES := \
     libmedia \
     libhardware \
     libhardware_legacy \
-    libserviceutility
+    libserviceutility \
+    libsrpc \
+	libstlport
 
 ifneq ($(USE_LEGACY_AUDIO_POLICY), 1)
 LOCAL_SHARED_LIBRARIES += \

@@ -26,7 +26,9 @@ LOCAL_SHARED_LIBRARIES := \
 	libutils \
 	liblog \
 	libbinder \
-	libsoundtriggerservice
+	libsoundtriggerservice \
+	libsrpc \
+	libstlport
 
 LOCAL_STATIC_LIBRARIES := \
 	libregistermsext
@@ -38,7 +40,8 @@ LOCAL_C_INCLUDES := \
     frameworks/av/services/audiopolicy \
     frameworks/av/services/camera/libcameraservice \
     $(call include-path-for, audio-utils) \
-    frameworks/av/services/soundtrigger
+    frameworks/av/services/soundtrigger \
+    external/stlport/stlport bionic/ bionic/libstdc++/include
 
 ifeq ($(strip $(AUDIO_FEATURE_ENABLED_LISTEN)),true)
   LOCAL_SHARED_LIBRARIES += liblisten

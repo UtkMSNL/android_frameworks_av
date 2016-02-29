@@ -3,7 +3,7 @@
 
 #include "AudioFlinger.h"
 #include <media/RpcAudioCommon.h>
-#include <rpc/share_rpc.h>
+#include <rpc/sbuffer_sync.h>
 
 namespace android {
 

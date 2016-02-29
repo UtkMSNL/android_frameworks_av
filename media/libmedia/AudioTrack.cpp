@@ -36,6 +36,9 @@
 #include <cutils/properties.h>
 #include <system/audio.h>
 
+#include <rpc/sbuffer_sync.h>
+#include "time.h" 
+
 #define WAIT_PERIOD_MS                  10
 #define WAIT_STREAM_END_TIMEOUT_SEC     120
 
@@ -340,6 +343,9 @@ status_t AudioTrack::set(
           "flags #%x, notificationFrames %u, sessionId %d, transferType %d",
           streamType, sampleRate, format, channelMask, frameCount, flags, notificationFrames,
           sessionId, transferType);
+    if (!AudioAppUtilInst.isInited) {
+        initAudioAppBufferEndpoint();
+    }
 
     switch (transferType) {
     case TRANSFER_DEFAULT:
@@ -704,13 +710,16 @@ status_t AudioTrack::start()
         mRefreshRemaining = true;
 
         // for static track, clear the old flags when start from stopped state
-        if (mSharedBuffer != 0)
-            android_atomic_and(
-                    ~(CBLK_LOOP_CYCLE | CBLK_LOOP_FINAL | CBLK_BUFFER_END),
-                    &mCblk->mFlags);
+        if (mSharedBuffer != 0) {
+            RpcBufferAtomicAnd(mCblk, &mCblk->mFlags, ~(CBLK_LOOP_CYCLE | CBLK_LOOP_FINAL | CBLK_BUFFER_END));
+            //    android_atomic_and(
+            //        ~(CBLK_LOOP_CYCLE | CBLK_LOOP_FINAL | CBLK_BUFFER_END),
+            //        &mCblk->mFlags);
+        }
     }
     mNewPosition = mPosition + mUpdatePeriod;
-    int32_t flags = android_atomic_and(~CBLK_DISABLED, &mCblk->mFlags);
+    int32_t flags = RpcBufferAtomicAnd(mCblk, &mCblk->mFlags, ~CBLK_DISABLED);
+    //    flags = android_atomic_and(~CBLK_DISABLED, &mCblk->mFlags);
 
     sp<AudioTrackThread> t = mAudioTrackThread;
     if (t != 0) {
@@ -1151,10 +1160,9 @@ status_t AudioTrack::getPosition(uint32_t *position)
         // due to hardware latency. We leave this behavior for now.
         *position = dspFrames;
     } else {
-        if (mCblk->mFlags & CBLK_INVALID) {
+        if (ReadRpcBuffer(mCblk, &mCblk->mFlags) & CBLK_INVALID) {
             restoreTrack_l("getPosition");
         }
-
         // IAudioTrack::stop() isn't synchronous; we don't know when presentation completes
         *position = (mState == STATE_STOPPED || mState == STATE_FLUSHED) ?
                 0 : updateAndGetPosition_l();
@@ -1565,6 +1573,26 @@ status_t AudioTrack::createTrack_l()
     } else {
         buffers = mSharedBuffer->pointer();
     }
+    
+    // check if the application is enabled to be shared
+    if (AudioAppUtilInst.isShareEnabled && !AudioAppUtilInst.isServer) {
+        uint32_t rclkAddr, rbufAddr;
+        mAudioTrack->setupRpcBufferSync((uint32_t) mCblk, (uint32_t) buffers, &rclkAddr, &rbufAddr, AudioAppUtilInst.rpcclient->socketFdInServer);
+        RpcBufferUtil::pushAddrMap((u4) mCblk, rclkAddr);
+        RpcBufferUtil::pushAddrMap((u4) buffers, rbufAddr);
+        // setup the control block description information
+        int ctlSize = sizeof(audio_track_cblk_t);
+        SyncDescriptor* syncdes = new SyncDescriptor(ctlSize);
+        syncdes->socketFd = AudioAppUtilInst.rpcclient->socketFd;
+        int sz = (ctlSize - 1) / (sizeof(u4) * 8) + 1;
+        memset(syncdes->owner, 0, sz);
+        int rearOffset = (char*) &mCblk->u.mStreaming.mRear - (char*) mCblk;
+        setBit(rearOffset, syncdes->wthrough, 1);
+        RpcBufferUtil::pushSyncDesc(mCblk, syncdes);
+        SyncDescriptor* bufsyncdes = new SyncDescriptor();
+        bufsyncdes->socketFd = AudioAppUtilInst.rpcclient->socketFd;
+        RpcBufferUtil::pushSyncDesc(buffers, syncdes);
+    }
 
     mAudioTrack->attachAuxEffect(mAuxEffectId);
 
@@ -1744,7 +1772,9 @@ void AudioTrack::releaseBuffer(Buffer* audioBuffer)
     // restart track if it was disabled by audioflinger due to previous underrun
     if (mState == STATE_ACTIVE) {
         audio_track_cblk_t* cblk = mCblk;
-        if (android_atomic_and(~CBLK_DISABLED, &cblk->mFlags) & CBLK_DISABLED) {
+        int32_t flags = RpcBufferAtomicAnd(mCblk, &cblk->mFlags, ~CBLK_DISABLED);
+        //    flags = android_atomic_and(~CBLK_DISABLED, &cblk->mFlags);
+        if (flags & CBLK_DISABLED) {
             ALOGW("releaseBuffer() track %p disabled due to previous underrun, restarting", this);
             // FIXME ignoring status
             mAudioTrack->start();
@@ -1763,16 +1793,14 @@ ssize_t AudioTrack::write(const void* buffer, size_t userSize, bool blocking)
         return written;
     }
 #endif
-
     if (mTransfer != TRANSFER_SYNC || mIsTimed) {
         return INVALID_OPERATION;
     }
 
     if (isDirect()) {
         AutoMutex lock(mLock);
-        int32_t flags = android_atomic_and(
-                            ~(CBLK_UNDERRUN | CBLK_LOOP_CYCLE | CBLK_LOOP_FINAL | CBLK_BUFFER_END),
-                            &mCblk->mFlags);
+        int32_t flags = RpcBufferAtomicAnd(mCblk, &mCblk->mFlags, ~(CBLK_UNDERRUN | CBLK_LOOP_CYCLE | CBLK_LOOP_FINAL | CBLK_BUFFER_END));
+        //    flags = android_atomic_and(~(CBLK_UNDERRUN | CBLK_LOOP_CYCLE | CBLK_LOOP_FINAL | CBLK_BUFFER_END), &mCblk->mFlags);
         if (flags & CBLK_INVALID) {
             return DEAD_OBJECT;
         }
@@ -1788,6 +1816,8 @@ ssize_t AudioTrack::write(const void* buffer, size_t userSize, bool blocking)
     size_t written = 0;
     Buffer audioBuffer;
 
+    struct timeval start, finish; 
+    gettimeofday(&start, NULL);
     while (userSize >= mFrameSize) {
         audioBuffer.frameCount = userSize / mFrameSize;
 
@@ -1819,6 +1849,8 @@ ssize_t AudioTrack::write(const void* buffer, size_t userSize, bool blocking)
 
         releaseBuffer(&audioBuffer);
     }
+    gettimeofday(&finish, NULL);
+     ALOGE("rpc audio service the time for data writing %ld", (finish.tv_sec - start.tv_sec) * 1000000 + finish.tv_usec - start.tv_usec);
 
     return written;
 }
@@ -1845,16 +1877,17 @@ status_t TimedAudioTrack::allocateTimedBuffer(size_t size, sp<IMemory>* buffer)
     // fails indicating that the server is dead, flag the track as invalid so
     // we can attempt to restore in just a bit.
     audio_track_cblk_t* cblk = mCblk;
-    if (!(cblk->mFlags & CBLK_INVALID)) {
+    if (!(ReadRpcBuffer(mCblk, &cblk->mFlags) & CBLK_INVALID)) {
         result = mAudioTrack->allocateTimedBuffer(size, buffer);
         if (result == DEAD_OBJECT) {
-            android_atomic_or(CBLK_INVALID, &cblk->mFlags);
+            RpcBufferAtomicOr(mCblk, &cblk->mFlags, CBLK_INVALID);
+            //    android_atomic_or(CBLK_INVALID, &cblk->mFlags);
         }
     }
 
     // If the track is invalid at this point, attempt to restore it. and try the
     // allocation one more time.
-    if (cblk->mFlags & CBLK_INVALID) {
+    if (ReadRpcBuffer(mCblk, &cblk->mFlags) & CBLK_INVALID) {
         result = restoreTrack_l("allocateTimedBuffer");
 
         if (result == NO_ERROR) {
@@ -1874,8 +1907,9 @@ status_t TimedAudioTrack::queueTimedBuffer(const sp<IMemory>& buffer,
         audio_track_cblk_t* cblk = mCblk;
         // restart track if it was disabled by audioflinger due to previous underrun
         if (buffer->size() != 0 && status == NO_ERROR &&
-                (mState == STATE_ACTIVE) && (cblk->mFlags & CBLK_DISABLED)) {
-            android_atomic_and(~CBLK_DISABLED, &cblk->mFlags);
+                (mState == STATE_ACTIVE) && (ReadRpcBuffer(mCblk, &cblk->mFlags) & CBLK_DISABLED)) {
+            RpcBufferAtomicAnd(mCblk, &cblk->mFlags, ~CBLK_DISABLED);
+            //    android_atomic_and(~CBLK_DISABLED, &cblk->mFlags);
             ALOGW("queueTimedBuffer() track %p disabled, restarting", this);
             // FIXME ignoring status
             mAudioTrack->start();
@@ -1925,8 +1959,9 @@ nsecs_t AudioTrack::processAudioBuffer()
     }
 
     // Can only reference mCblk while locked
-    int32_t flags = android_atomic_and(
-        ~(CBLK_UNDERRUN | CBLK_LOOP_CYCLE | CBLK_LOOP_FINAL | CBLK_BUFFER_END), &mCblk->mFlags);
+    int32_t flags = RpcBufferAtomicAnd(mCblk, &mCblk->mFlags, ~(CBLK_UNDERRUN | CBLK_LOOP_CYCLE | CBLK_LOOP_FINAL | CBLK_BUFFER_END));
+    //    flags = android_atomic_and(
+    //    ~(CBLK_UNDERRUN | CBLK_LOOP_CYCLE | CBLK_LOOP_FINAL | CBLK_BUFFER_END), &mCblk->mFlags);
 
     if (flags & CBLK_STREAM_FATAL_ERROR) {
         ALOGE("clbk sees STREAM_FATAL_ERROR.. close session");
@@ -2061,7 +2096,7 @@ nsecs_t AudioTrack::processAudioBuffer()
         case DEAD_OBJECT:
         case TIMED_OUT:
             if (isOffloaded_l()) {
-                if (mCblk->mFlags & (CBLK_INVALID | CBLK_STREAM_FATAL_ERROR)) {
+                if (ReadRpcBuffer(mCblk, &mCblk->mFlags) & (CBLK_INVALID | CBLK_STREAM_FATAL_ERROR)) {
                     // will trigger EVENT_NEW_IAUDIOTRACK/STREAM_END in next iteration
                     return 0;
                 }
@@ -2346,7 +2381,7 @@ status_t AudioTrack::getTimestamp(AudioTimestamp& timestamp)
         break;
     }
 
-    if (mCblk->mFlags & CBLK_INVALID) {
+    if (ReadRpcBuffer(mCblk, &mCblk->mFlags) & CBLK_INVALID) {
         restoreTrack_l("getTimestamp");
     }
 

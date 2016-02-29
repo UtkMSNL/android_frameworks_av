@@ -39,7 +39,44 @@
 #include "ListenService.h"
 #endif
 
+#include "RpcAudioFlinger.h"
+#include "RpcAudioFlingerServer.h"
+#include "RpcAudioPolicyService.h"
+#include "RpcAudioPolicyServiceServer.h"
+#include <rpc/share_rpc.h>
+#include <pthread.h>
+#include <unistd.h>
+
 using namespace android;
+
+static void* initAudioRpc(void* args) {
+    while (!isAudioReadyToInit()) {
+        ALOGE("rpc audio service the network is still not available");
+        sleep(1);
+    }
+    initAudioRpcEndpoint();
+    
+    // rpc client initialize the rpc audio service
+    if (AudioRpcUtilInst.isShareEnabled && !AudioRpcUtilInst.isServer) {
+        RpcAudioFlinger::instantiate();
+        RpcAudioPolicyService::instantiate();
+        //ALOGE("rpc audio service sharing endpoint started");
+    }
+    
+    // rpc server start to register the rpc functions it can serve
+    if (AudioRpcUtilInst.isShareEnabled && AudioRpcUtilInst.isServer) {
+        // get the service handle and register it to rpc module
+        sp<AudioFlinger>* gAudioFlinger = new sp<AudioFlinger>((AudioFlinger*) AudioRpcUtilInst.audioFlinger);
+        AudioRpcUtilInst.idToObjMap[AudioRpcUtilInst.AUDIO_SERVICE_ID] = gAudioFlinger;
+        sp<AudioPolicyService>* gAudioPolicyService = new sp<AudioPolicyService>((AudioPolicyService*) AudioRpcUtilInst.audioPolicyService);
+        AudioRpcUtilInst.idToObjMap[AudioRpcUtilInst.AUDIO_POLICY_SERVICE_ID] = gAudioPolicyService;
+        // register server method
+        registerRpcAudioFlingerServer();
+        registerRpcAudioPolicyServiceServer();
+    }
+    
+    return NULL;
+} 
 
 int main(int argc __unused, char** argv)
 {
@@ -138,6 +175,8 @@ int main(int argc __unused, char** argv)
         AudioPolicyService::instantiate();
         SoundTriggerHwService::instantiate();
         registerExtensions();
+        pthread_t initThread;
+        pthread_create(&initThread, NULL, initAudioRpc, NULL);
         ProcessState::self()->startThreadPool();
         IPCThreadState::self()->joinThreadPool();
     }

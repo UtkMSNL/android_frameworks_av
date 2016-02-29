@@ -28,6 +28,8 @@
 #include <media/SingleStateQueue.h>
 #include <private/media/StaticAudioTrackState.h>
 
+#include <rpc/sbuffer_sync.h>
+
 namespace android {
 
 // ----------------------------------------------------------------------------
@@ -235,7 +237,8 @@ public:
     void        interrupt();
 
     size_t      getPosition() {
-        return mEpoch + mCblk->mServer;
+        return mEpoch + ReadRpcBuffer(mCblk, &mCblk->mServer);
+        //return mEpoch + mCblk->mServer;
     }
 
     void        setEpoch(size_t epoch) {

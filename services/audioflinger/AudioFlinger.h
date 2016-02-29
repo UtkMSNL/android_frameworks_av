@@ -538,7 +538,7 @@ public:
     // server side of the client's IAudioTrack
     class TrackHandle : public android::BnAudioTrack {
     public:
-                            TrackHandle();
+                            TrackHandle(){}
                             TrackHandle(const sp<PlaybackThread::Track>& track);
         virtual             ~TrackHandle();
         virtual sp<IMemory> getCblk() const;
@@ -556,6 +556,7 @@ public:
         virtual status_t    setParameters(const String8& keyValuePairs);
         virtual status_t    getTimestamp(AudioTimestamp& timestamp);
         virtual void        signal(); // signal playback thread for a change in control block
+        virtual void        setupRpcBufferSync(uint32_t lctlAddr, uint32_t lbufAddr, uint32_t* rctlAddr, uint32_t* rbufAddr, int socketFdInServer);
 
         virtual status_t onTransact(
             uint32_t code, const Parcel& data, Parcel* reply, uint32_t flags);

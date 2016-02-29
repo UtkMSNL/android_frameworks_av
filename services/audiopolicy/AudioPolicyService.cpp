@@ -41,6 +41,8 @@
 #include <system/audio_policy.h>
 #include <hardware/audio_policy.h>
 
+#include <rpc/share_rpc.h>
+
 namespace android {
 
 static const char kDeadlockedString[] = "AudioPolicyService may be deadlocked\n";
@@ -61,6 +63,7 @@ AudioPolicyService::AudioPolicyService()
     : BnAudioPolicyService(), mpAudioPolicyDev(NULL), mpAudioPolicy(NULL),
       mAudioPolicyManager(NULL), mAudioPolicyClient(NULL), mPhoneState(AUDIO_MODE_INVALID)
 {
+    AudioRpcUtilInst.audioPolicyService = this;
 }
 
 void AudioPolicyService::onFirstRef()

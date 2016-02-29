@@ -90,6 +90,8 @@
 #include "postpro_patch.h"
 #endif
 
+#include <rpc/share_rpc.h>
+
 // ----------------------------------------------------------------------------
 
 // Note: the following macro is used for extremely verbose logging message.  In
@@ -227,6 +229,7 @@ AudioFlinger::AudioFlinger()
       mPrimaryOutputSampleRate(0)
 #endif
 {
+    AudioRpcUtilInst.audioFlinger = this;
     getpid_cached = getpid();
     char value[PROPERTY_VALUE_MAX];
     bool doLog = (property_get("ro.test_harness", value, "0") > 0) && (atoi(value) == 1);

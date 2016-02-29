@@ -40,7 +40,7 @@
 
 #include "AudioFlinger.h"
 #include <media/RpcAudioCommon.h>
-#include "rpc/share_rpc.h"
+#include <rpc/share_rpc.h>
 
 namespace android {
 
@@ -93,8 +93,8 @@ public:
                                 int *sessionId,
                                 size_t *notificationFrames,
                                 sp<IMemory>& cblk,
-                                sp<IMemory>& buffers,
-                                status_t *status /*non-NULL*/);
+                                sp<IMemory>& buffers, 
+                                status_t *status /*non-NULL*/) { return NULL; }
 
     virtual     uint32_t    sampleRate(audio_io_handle_t output) const;
     virtual     audio_format_t format(audio_io_handle_t output) const;
@@ -136,16 +136,16 @@ public:
                                 audio_devices_t *devices,
                                 const String8& address,
                                 uint32_t *latencyMs,
-                                audio_output_flags_t flags);
+                                audio_output_flags_t flags) { return -1; }
 
     virtual audio_io_handle_t openDuplicateOutput(audio_io_handle_t output1,
-                                                  audio_io_handle_t output2);
+                                                  audio_io_handle_t output2) { return -1; }
 
-    virtual status_t closeOutput(audio_io_handle_t output);
+    virtual status_t closeOutput(audio_io_handle_t output) { return -1; }
 
-    virtual status_t suspendOutput(audio_io_handle_t output);
+    virtual status_t suspendOutput(audio_io_handle_t output) { return -1; }
 
-    virtual status_t restoreOutput(audio_io_handle_t output);
+    virtual status_t restoreOutput(audio_io_handle_t output) { return -1; }
 
     virtual status_t openInput(audio_module_handle_t module,
                                audio_io_handle_t *input,
@@ -153,9 +153,9 @@ public:
                                audio_devices_t *device,
                                const String8& address,
                                audio_source_t source,
-                               audio_input_flags_t flags);
+                               audio_input_flags_t flags) { return -1; }
 
-    virtual status_t closeInput(audio_io_handle_t input);
+    virtual status_t closeInput(audio_io_handle_t input) { return -1; }
 
     virtual status_t invalidateStream(audio_stream_type_t stream);
 
@@ -172,12 +172,12 @@ public:
 
     virtual void releaseAudioSessionId(int audioSession, pid_t pid);
 
-    virtual status_t queryNumberEffects(uint32_t *numEffects) const;
+    virtual status_t queryNumberEffects(uint32_t *numEffects) const { return -1; }
 
-    virtual status_t queryEffect(uint32_t index, effect_descriptor_t *descriptor) const;
+    virtual status_t queryEffect(uint32_t index, effect_descriptor_t *descriptor) const { return -1; }
 
     virtual status_t getEffectDescriptor(const effect_uuid_t *pUuid,
-                                         effect_descriptor_t *descriptor) const;
+                                         effect_descriptor_t *descriptor) const { return -1; }
 
     virtual sp<IEffect> createEffect(
                         effect_descriptor_t *pDesc,
@@ -187,12 +187,12 @@ public:
                         int sessionId,
                         status_t *status /*non-NULL*/,
                         int *id,
-                        int *enabled);
+                        int *enabled) { return NULL; }
 
     virtual status_t moveEffects(int sessionId, audio_io_handle_t srcOutput,
-                        audio_io_handle_t dstOutput);
+                        audio_io_handle_t dstOutput) { return -1; }
 
-    virtual audio_module_handle_t loadHwModule(const char *name);
+    virtual audio_module_handle_t loadHwModule(const char *name) { return -1; }
 
     virtual uint32_t getPrimaryOutputSamplingRate();
     virtual size_t getPrimaryOutputFrameCount();
@@ -201,33 +201,27 @@ public:
 
     /* List available audio ports and their attributes */
     virtual status_t listAudioPorts(unsigned int *num_ports,
-                                    struct audio_port *ports);
+                                    struct audio_port *ports) { return -1; }
 
     /* Get attributes for a given audio port */
-    virtual status_t getAudioPort(struct audio_port *port);
+    virtual status_t getAudioPort(struct audio_port *port) { return -1; }
 
     /* Create an audio patch between several source and sink ports */
     virtual status_t createAudioPatch(const struct audio_patch *patch,
-                                       audio_patch_handle_t *handle);
+                                       audio_patch_handle_t *handle) { return -1; }
 
     /* Release an audio patch */
-    virtual status_t releaseAudioPatch(audio_patch_handle_t handle);
+    virtual status_t releaseAudioPatch(audio_patch_handle_t handle) { return -1; }
 
     /* List existing audio patches */
     virtual status_t listAudioPatches(unsigned int *num_patches,
-                                      struct audio_patch *patches);
+                                      struct audio_patch *patches) { return -1; }
 
     /* Set audio port configuration */
-    virtual status_t setAudioPortConfig(const struct audio_port_config *config);
+    virtual status_t setAudioPortConfig(const struct audio_port_config *config) { return -1; }
 
     /* Get the HW synchronization source used for an audio session */
-    virtual audio_hw_sync_t getAudioHwSyncForSession(audio_session_t sessionId);
-
-    virtual     status_t    onTransact(
-                                uint32_t code,
-                                const Parcel& data,
-                                Parcel* reply,
-                                uint32_t flags);
+    virtual audio_hw_sync_t getAudioHwSyncForSession(audio_session_t sessionId) { return -1; }
 
 #ifdef QCOM_DIRECTTRACK
     bool applyEffectsOn(void *token,
@@ -240,16 +234,18 @@ public:
     // end of IAudioFlinger interface
 
 private:
+                            RpcAudioFlinger() ANDROID_API;
     virtual                 ~RpcAudioFlinger();
 
     // RefBase
     virtual     void        onFirstRef();
     
     // --- RpcDummyClient ---
-    class RpcDummyClient : public AudioFlinger::Client {
+    class RpcDummyClient : public RefBase {
     public:
                             RpcDummyClient(const sp<RpcAudioFlinger>& audioFlinger, pid_t pid);
         virtual             ~RpcDummyClient();
+        sp<MemoryDealer>    heap() const;
     private:
         int mRemoteServiceId;
         const sp<RpcAudioFlinger> mAudioFlinger;
@@ -301,6 +297,7 @@ private:
         virtual status_t    setParameters(const String8& keyValuePairs);
         virtual status_t    getTimestamp(AudioTimestamp& timestamp);
         virtual void        signal(); // signal playback thread for a change in control block
+        virtual void        setupRpcBufferSync(uint32_t lctlAddr, uint32_t lbufAddr, uint32_t* rctlAddr, uint32_t* rbufAddr, int socketFdInServer);
 
         virtual status_t onTransact(
             uint32_t code, const Parcel& data, Parcel* reply, uint32_t flags);

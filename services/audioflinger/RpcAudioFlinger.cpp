@@ -46,69 +46,11 @@
 
 namespace android {
 
-#define RPC_CLIENT_REQUEST_COMMON(_serviceId, _methId)                  \
-    RpcRequest* request = new RpcRequest(_serviceId,                    \
-            _methId, RpcUtilInst.rpcclient->socketFd, true);            \
-    uid_t uidval = IPCThreadState::self()->getCallingUid();             \
-    pid_t pidval = IPCThreadState::self()->getCallingPid();             \
-    request->putArg((char*) &uidval, sizeof(uidval));                      \
-    request->putArg((char*) &pidval, sizeof(pidval));
-    
-#define RPC_CLIENT_RESPONSE_NORET()                                     \
-    RpcResponse* response = RpcUtilInst.rpcclient->doRpc(request);      \
-    delete response; 
-    
-#define RPC_CLIENT_RESPONSE_RET(_retType)                               \
-    RpcResponse* response = RpcUtilInst.rpcclient->doRpc(request);      \
-    _retType result;                                                    \
-    response->getRet((char*) &result, sizeof(result));                  \
-    delete response;                                                    \
-    return result;
-
-#define RPC_CLIENT_FUNC00(_serviceId, _methId)                          \
-    RPC_CLIENT_REQUEST_COMMON(_serviceId, _methId)                      \
-    RPC_CLIENT_RESPONSE_NORET()
-
-#define RPC_CLIENT_FUNC10(_serviceId, _methId, _arg1)                   \
-    RPC_CLIENT_REQUEST_COMMON(_serviceId, _methId)                      \
-    request->putArg((char*) &_arg1, sizeof(_arg1));                     \
-    RPC_CLIENT_RESPONSE_NORET()
-
-#define RPC_CLIENT_FUNC20(_serviceId, _methId, _arg1, _arg2)            \
-    RPC_CLIENT_REQUEST_COMMON(_serviceId, _methId)                      \
-    request->putArg((char*) &_arg1, sizeof(_arg1));                     \
-    request->putArg((char*) &_arg2, sizeof(_arg2));                     \
-    RPC_CLIENT_RESPONSE_NORET()
-        
-#define RPC_CLIENT_FUNC01(_serviceId, _methId, _retType)                \
-    RPC_CLIENT_REQUEST_COMMON(_serviceId, _methId)                      \
-    RPC_CLIENT_RESPONSE_RET(_retType)  
-
-#define RPC_CLIENT_FUNC11(_serviceId, _methId, _arg1, _retType)         \
-    RPC_CLIENT_REQUEST_COMMON(_serviceId, _methId)                      \
-    request->putArg((char*) &_arg1, sizeof(_arg1));                     \
-    RPC_CLIENT_RESPONSE_RET(_retType) 
-
-#define RPC_CLIENT_FUNC21(_serviceId, _methId, _arg1, _arg2, _retType)  \
-    RPC_CLIENT_REQUEST_COMMON(_serviceId, _methId)                      \
-    request->putArg((char*) &_arg1, sizeof(_arg1));                     \
-    request->putArg((char*) &_arg2, sizeof(_arg2));                     \
-    RPC_CLIENT_RESPONSE_RET(_retType)
-
-#define RPC_CLIENT_FUNC31(_serviceId, _methId,                          \
-                                        _arg1, _arg2, _arg3, _retType)  \
-    RPC_CLIENT_REQUEST_COMMON(_serviceId, _methId)                      \
-    request->putArg((char*) &_arg1, sizeof(_arg1));                     \
-    request->putArg((char*) &_arg2, sizeof(_arg2));                     \
-    request->putArg((char*) &_arg3, sizeof(_arg3));                     \
-    RPC_CLIENT_RESPONSE_RET(_retType)
-
 // ----------------------------------------------------------------------------
 
-//RpcAudioFlinger::RpcAudioFlinger()
-//    : BnAudioFlinger()
-//{
-//}
+RpcAudioFlinger::RpcAudioFlinger()
+{
+}
 
 void RpcAudioFlinger::onFirstRef()
 {
@@ -157,7 +99,7 @@ sp<IAudioTrack> RpcAudioFlinger::createTrack(
         int clientUid,
         status_t *status)
 {
-    RPC_CLIENT_REQUEST_COMMON(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_CREATE_TRACK)
+    RPC_CLIENT_REQUEST_COMMON(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_CREATE_TRACK)
     
     request->putArg((char*) &streamType, sizeof(streamType));
     request->putArg((char*) &sampleRate, sizeof(sampleRate));
@@ -177,7 +119,7 @@ sp<IAudioTrack> RpcAudioFlinger::createTrack(
     
     }
     
-    RpcResponse* response = RpcUtilInst.rpcclient->doRpc(request);
+    RpcResponse* response = AudioRpcUtilInst.rpcclient->doRpc(request);
     response->getRet((char*) frameCount, sizeof(size_t));
     response->getRet((char*) flags, sizeof(IAudioFlinger::track_flags_t));
     response->getRet((char*) sessionId, sizeof(int));
@@ -195,67 +137,67 @@ sp<IAudioTrack> RpcAudioFlinger::createTrack(
 }
 
 uint32_t RpcAudioFlinger::sampleRate(audio_io_handle_t output) const {
-    RPC_CLIENT_FUNC11(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SAMPLE_RATE, output, uint32_t)
+    RPC_CLIENT_FUNC11(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SAMPLE_RATE, output, uint32_t)
 }
 
 audio_format_t RpcAudioFlinger::format(audio_io_handle_t output) const {
-    RPC_CLIENT_FUNC11(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_FORMAT, output, audio_format_t)
+    RPC_CLIENT_FUNC11(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_FORMAT, output, audio_format_t)
 }
 
 size_t RpcAudioFlinger::frameCount(audio_io_handle_t output) const {
-    RPC_CLIENT_FUNC11(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_FRAME_COUNT, output, size_t)
+    RPC_CLIENT_FUNC11(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_FRAME_COUNT, output, size_t)
 }
 
 uint32_t RpcAudioFlinger::latency(audio_io_handle_t output) const {
-    RPC_CLIENT_FUNC11(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_LATENCY, output, uint32_t)
+    RPC_CLIENT_FUNC11(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_LATENCY, output, uint32_t)
 }
 
 status_t RpcAudioFlinger::setMasterVolume(float value) {
-    RPC_CLIENT_FUNC11(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SET_MASTER_VOLUME, value, status_t)
+    RPC_CLIENT_FUNC11(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SET_MASTER_VOLUME, value, status_t)
 }
 
 status_t RpcAudioFlinger::setMasterMute(bool muted) {
-    RPC_CLIENT_FUNC11(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SET_MASTER_MUTE, muted, status_t)
+    RPC_CLIENT_FUNC11(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SET_MASTER_MUTE, muted, status_t)
 }
 
 float RpcAudioFlinger::masterVolume() const {
-    RPC_CLIENT_FUNC01(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_MASTER_VOLUME, float)
+    RPC_CLIENT_FUNC01(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_MASTER_VOLUME, float)
 }
 
 bool RpcAudioFlinger::masterMute() const {
-    RPC_CLIENT_FUNC01(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_MASTER_MUTE, bool)
+    RPC_CLIENT_FUNC01(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_MASTER_MUTE, bool)
 }
 
 status_t RpcAudioFlinger::setStreamVolume(audio_stream_type_t stream, float value, audio_io_handle_t output) {
-    RPC_CLIENT_FUNC31(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SET_STREAM_VOLUME, stream, value, output, status_t)
+    RPC_CLIENT_FUNC31(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SET_STREAM_VOLUME, stream, value, output, status_t)
 }
 
 status_t RpcAudioFlinger::setStreamMute(audio_stream_type_t stream, bool muted) {
-    RPC_CLIENT_FUNC21(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SET_STREAM_MUTE, stream, muted, status_t)
+    RPC_CLIENT_FUNC21(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SET_STREAM_MUTE, stream, muted, status_t)
 }
 
 float RpcAudioFlinger::streamVolume(audio_stream_type_t stream, audio_io_handle_t output) const {
-    RPC_CLIENT_FUNC21(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_STREAM_VOLUME, stream, output, float)
+    RPC_CLIENT_FUNC21(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_STREAM_VOLUME, stream, output, float)
 }
 
 bool RpcAudioFlinger::streamMute(audio_stream_type_t stream) const {
-    RPC_CLIENT_FUNC11(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_STREAM_MUTE, stream, bool)
+    RPC_CLIENT_FUNC11(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_STREAM_MUTE, stream, bool)
 }
 
 status_t RpcAudioFlinger::setMode(audio_mode_t mode) {
-    RPC_CLIENT_FUNC11(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SET_MODE, mode, status_t)
+    RPC_CLIENT_FUNC11(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SET_MODE, mode, status_t)
 }
 
 status_t RpcAudioFlinger::setMicMute(bool state) {
-    RPC_CLIENT_FUNC11(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SET_MIC_MUTE, state, status_t)
+    RPC_CLIENT_FUNC11(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SET_MIC_MUTE, state, status_t)
 }
 
 bool RpcAudioFlinger::getMicMute() const {
-    RPC_CLIENT_FUNC01(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_GET_MIC_MUTE, bool)
+    RPC_CLIENT_FUNC01(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_GET_MIC_MUTE, bool)
 }
 
 status_t RpcAudioFlinger::setParameters(audio_io_handle_t ioHandle, const String8& keyValuePairs) {
-    RPC_CLIENT_REQUEST_COMMON(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SET_PARAMETERS)
+    RPC_CLIENT_REQUEST_COMMON(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SET_PARAMETERS)
     
     request->putArg((char*) &ioHandle, sizeof(ioHandle));
     size_t len = keyValuePairs.length();
@@ -266,14 +208,14 @@ status_t RpcAudioFlinger::setParameters(audio_io_handle_t ioHandle, const String
 }
 
 String8 RpcAudioFlinger::getParameters(audio_io_handle_t ioHandle, const String8& keys) const {
-    RPC_CLIENT_REQUEST_COMMON(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_GET_PARAMETERS)
+    RPC_CLIENT_REQUEST_COMMON(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_GET_PARAMETERS)
     
     request->putArg((char*) &ioHandle, sizeof(ioHandle));
     size_t len = keys.length();
     request->putArg((char*) &len, sizeof(len));
     request->putArg((char*) keys.string(), len);
     
-    RpcResponse* response = RpcUtilInst.rpcclient->doRpc(request);
+    RpcResponse* response = AudioRpcUtilInst.rpcclient->doRpc(request);
     response->getRet((char*) &len, sizeof(len));
     char keyValBuf[len];
     response->getRet(keyValBuf, len);
@@ -289,25 +231,25 @@ String8 RpcAudioFlinger::getParameters(audio_io_handle_t ioHandle, const String8
 void RpcAudioFlinger::registerClient(const sp<IAudioFlingerClient>& client){}
 
 size_t RpcAudioFlinger::getInputBufferSize(uint32_t sampleRate, audio_format_t format, audio_channel_mask_t channelMask) const {
-    RPC_CLIENT_FUNC31(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_GET_INPUT_BUFFER_SIZE, sampleRate, format, channelMask, size_t)
+    RPC_CLIENT_FUNC31(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_GET_INPUT_BUFFER_SIZE, sampleRate, format, channelMask, size_t)
 }
 
 status_t RpcAudioFlinger::invalidateStream(audio_stream_type_t stream) {
-    RPC_CLIENT_FUNC11(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_INVALIDATE_STREAM, stream, status_t)
+    RPC_CLIENT_FUNC11(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_INVALIDATE_STREAM, stream, status_t)
 }
 
 status_t RpcAudioFlinger::setVoiceVolume(float volume) {
-    RPC_CLIENT_FUNC11(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SET_VOICE_VOLUME, volume, status_t)
+    RPC_CLIENT_FUNC11(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SET_VOICE_VOLUME, volume, status_t)
 }
 
-status_t getRenderPosition(uint32_t *halFrames, uint32_t *dspFrames, audio_io_handle_t output) const {
-    RPC_CLIENT_REQUEST_COMMON(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_GET_RENDER_POSITION)
+status_t RpcAudioFlinger::getRenderPosition(uint32_t *halFrames, uint32_t *dspFrames, audio_io_handle_t output) const {
+    RPC_CLIENT_REQUEST_COMMON(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_GET_RENDER_POSITION)
     
     request->putArg((char*) halFrames, sizeof(uint32_t));
     request->putArg((char*) dspFrames, sizeof(uint32_t));
     request->putArg((char*) &output, sizeof(output));
     
-    RpcResponse* response = RpcUtilInst.rpcclient->doRpc(request);
+    RpcResponse* response = AudioRpcUtilInst.rpcclient->doRpc(request);
     response->getRet((char*) halFrames, sizeof(uint32_t));
     response->getRet((char*) dspFrames, sizeof(uint32_t));
     status_t result;
@@ -319,31 +261,31 @@ status_t getRenderPosition(uint32_t *halFrames, uint32_t *dspFrames, audio_io_ha
 }
 
 uint32_t RpcAudioFlinger::getInputFramesLost(audio_io_handle_t ioHandle) const {
-    RPC_CLIENT_FUNC11(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_GET_INPUT_FRAMES_LOST, ioHandle, uint32_t)
+    RPC_CLIENT_FUNC11(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_GET_INPUT_FRAMES_LOST, ioHandle, uint32_t)
 }
 
 audio_unique_id_t RpcAudioFlinger::newAudioUniqueId() {
-    RPC_CLIENT_FUNC01(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_NEW_AUDIO_UNIQUE_ID, audio_unique_id_t)
+    RPC_CLIENT_FUNC01(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_NEW_AUDIO_UNIQUE_ID, audio_unique_id_t)
 }
 
 void RpcAudioFlinger::acquireAudioSessionId(int audioSession, pid_t pid) {
-    RPC_CLIENT_FUNC20(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_ACQUIRE_AUDIO_SESSION_ID, audioSession, pid)
+    RPC_CLIENT_FUNC20(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_ACQUIRE_AUDIO_SESSION_ID, audioSession, pid)
 }
 
 void RpcAudioFlinger::releaseAudioSessionId(int audioSession, pid_t pid) {
-    RPC_CLIENT_FUNC20(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_RELEASE_AUDIO_SESSION_ID, audioSession, pid)
+    RPC_CLIENT_FUNC20(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_RELEASE_AUDIO_SESSION_ID, audioSession, pid)
 }
 
 uint32_t RpcAudioFlinger::getPrimaryOutputSamplingRate() {
-    RPC_CLIENT_FUNC01(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_GET_PRIMARY_OUTPUT_SAMPLING_RATE, uint32_t)
+    RPC_CLIENT_FUNC01(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_GET_PRIMARY_OUTPUT_SAMPLING_RATE, uint32_t)
 }
 
 size_t RpcAudioFlinger::getPrimaryOutputFrameCount() {
-    RPC_CLIENT_FUNC01(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_GET_PRIMARY_OUTPUT_FRAME_COUNT, size_t)
+    RPC_CLIENT_FUNC01(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_GET_PRIMARY_OUTPUT_FRAME_COUNT, size_t)
 }
 
 status_t RpcAudioFlinger::setLowRamDevice(bool isLowRamDevice) {
-    RPC_CLIENT_FUNC11(RpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SET_LOW_RAM_DEVICE, isLowRamDevice, status_t)
+    RPC_CLIENT_FUNC11(AudioRpcUtilInst.AUDIO_SERVICE_ID, AF_METH_SET_LOW_RAM_DEVICE, isLowRamDevice, status_t)
 }
 
 // ----------------------------------------------------------------------------
@@ -405,13 +347,22 @@ RpcAudioFlinger::RpcDummyClient::RpcDummyClient(const sp<RpcAudioFlinger>& audio
     // 1 MB of address space is good for 32 tracks, 8 buffers each, 4 KB/buffer
 }
 
+RpcAudioFlinger::RpcDummyClient::~RpcDummyClient()
+{
+    //mAudioFlinger->removeClient_l(mPid); TODO: to be implemented
+}
+
+sp<MemoryDealer> RpcAudioFlinger::RpcDummyClient::heap() const
+{
+    return mMemoryDealer;
+}
+
 // ----------------------------------------------------------------------------
 //      RPC Track Handle Proxy
 // ----------------------------------------------------------------------------
 
 RpcAudioFlinger::RpcTrackHandleProxy::RpcTrackHandleProxy(const sp<RpcAudioFlinger::RpcDummyTrack>& track, const int remoteServiceId)
-    : TrackHandle(),
-      mRemoteServiceId(remoteServiceId),
+    : mRemoteServiceId(remoteServiceId),
       mTrack(track)
 {
 }
@@ -513,6 +464,21 @@ status_t RpcAudioFlinger::RpcTrackHandleProxy::getTimestamp(AudioTimestamp& time
 void RpcAudioFlinger::RpcTrackHandleProxy::signal()
 {
     RPC_CLIENT_FUNC00(mRemoteServiceId, TH_METH_SIGNAL)
+}
+
+void RpcAudioFlinger::RpcTrackHandleProxy::setupRpcBufferSync(uint32_t lctlAddr, uint32_t lbufAddr, uint32_t* rctlAddr, uint32_t* rbufAddr, int socketFdInServer)
+{
+    RPC_CLIENT_REQUEST_COMMON(mRemoteServiceId, TH_METH_SETUP_RPC_BUFFER_SYNC)
+    
+    request->putArg((char*) &lctlAddr, sizeof(lctlAddr));
+    request->putArg((char*) &lbufAddr, sizeof(lbufAddr));
+    request->putArg((char*) &socketFdInServer, sizeof(socketFdInServer));
+    
+    RpcResponse* response = AudioRpcUtilInst.rpcclient->doRpc(request);
+    response->getRet((char*) rctlAddr, sizeof(uint32_t));
+    response->getRet((char*) rbufAddr, sizeof(uint32_t));
+    
+    delete response;
 }
 
 status_t RpcAudioFlinger::RpcTrackHandleProxy::onTransact(
