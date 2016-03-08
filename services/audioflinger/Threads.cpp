@@ -3471,7 +3471,7 @@ AudioFlinger::PlaybackThread::mixer_state AudioFlinger::MixerThread::prepareTrac
 {
     struct timeval thisTime; 
     gettimeofday(&thisTime, NULL);
-    ALOGI("rpc audio service the interval for track mixer %ld", (thisTime.tv_sec - lastTime.tv_sec) * 1000000 + thisTime.tv_usec - lastTime.tv_usec);
+    //ALOGI("rpc audio service the interval for track mixer %ld", (thisTime.tv_sec - lastTime.tv_sec) * 1000000 + thisTime.tv_usec - lastTime.tv_usec);
     lastTime = thisTime;
     mixer_state mixerStatus = MIXER_IDLE;
     // find out which tracks need to be processed
