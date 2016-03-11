@@ -57,6 +57,7 @@ public:
     virtual status_t        sendCommand(int32_t cmd, int32_t arg1, int32_t arg2);
 
     // Interface used by CameraService
+    CameraClient();
     CameraClient(const sp<CameraService>& cameraService,
             const sp<ICameraClient>& cameraClient,
             const String16& clientPackageName,

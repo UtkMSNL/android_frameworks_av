@@ -43,18 +43,21 @@
 #include "RpcAudioFlingerServer.h"
 #include "RpcAudioPolicyService.h"
 #include "RpcAudioPolicyServiceServer.h"
+#include "RpcCameraService.h"
+#include "RpcCameraServiceServer.h"
 #include <rpc/share_rpc.h>
 #include <pthread.h>
 #include <unistd.h>
 
 using namespace android;
 
-static void* initAudioRpc(void* args) {
-    while (!isAudioReadyToInit()) {
+static void* initMediaRpc(void* args) {
+    while (!isNetworkReady()) {
         ALOGE("rpc audio service the network is still not available");
         sleep(1);
     }
     initAudioRpcEndpoint();
+    initCameraRpcEndpoint();
     
     // rpc client initialize the rpc audio service
     if (AudioRpcUtilInst.isShareEnabled && !AudioRpcUtilInst.isServer) {
@@ -73,6 +76,21 @@ static void* initAudioRpc(void* args) {
         // register server method
         registerRpcAudioFlingerServer();
         registerRpcAudioPolicyServiceServer();
+    }
+    
+    // rpc server start to register the rpc functions it can serve
+    if (CameraRpcUtilInst.isShareEnabled && CameraRpcUtilInst.isServer) {
+        sp<CameraService>* gCameraService = new sp<CameraService>((CameraService*) CameraRpcUtilInst.cameraService);
+        CameraRpcUtilInst.idToObjMap[CameraRpcUtilInst.CAMERA_SERVICE_ID] = gCameraService;
+        // register server method
+        registerRpcCameraServiceServer();
+    }
+    
+    // rpc client initialize the rpc camera service
+    if (CameraRpcUtilInst.isShareEnabled && !CameraRpcUtilInst.isServer) {
+        RpcCameraService::instantiate();
+        // register client method
+        registerRpcCameraService();
     }
     
     return NULL;
@@ -176,7 +194,7 @@ int main(int argc __unused, char** argv)
         SoundTriggerHwService::instantiate();
         registerExtensions();
         pthread_t initThread;
-        pthread_create(&initThread, NULL, initAudioRpc, NULL);
+        pthread_create(&initThread, NULL, initMediaRpc, NULL);
         ProcessState::self()->startThreadPool();
         IPCThreadState::self()->joinThreadPool();
     }

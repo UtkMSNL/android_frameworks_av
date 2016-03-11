@@ -126,7 +126,7 @@ class VendorTagDescriptor
          * This will contain NULL if no vendor tags are defined.
          */
         static sp<VendorTagDescriptor> getGlobalVendorTagDescriptor();
-    protected:
+
         VendorTagDescriptor();
         KeyedVector<String8, KeyedVector<String8, uint32_t>*> mReverseMapping;
         KeyedVector<uint32_t, String8> mTagToNameMap;

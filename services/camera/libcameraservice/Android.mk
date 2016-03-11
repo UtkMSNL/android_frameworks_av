@@ -22,12 +22,17 @@ include $(CLEAR_VARS)
 
 LOCAL_SRC_FILES:=               \
     CameraService.cpp \
+    RpcCameraService.cpp \
+    RpcCameraServiceServer.cpp \
     CameraDeviceFactory.cpp \
     common/Camera2ClientBase.cpp \
     common/CameraDeviceBase.cpp \
     common/FrameProcessorBase.cpp \
     api1/CameraClient.cpp \
     api1/Camera2Client.cpp \
+    api1/RpcBufferConsumerListener.cpp \
+    api1/RpcCameraClientProxy.cpp \
+    api1/RpcCameraClientServer.cpp \
     api1/client2/Parameters.cpp \
     api1/client2/FrameProcessor.cpp \
     api1/client2/StreamingProcessor.cpp \
@@ -65,12 +70,15 @@ LOCAL_SHARED_LIBRARIES:= \
     libhardware \
     libsync \
     libcamera_metadata \
-    libjpeg
+    libjpeg \
+    libsrpc \
+	libstlport
 
 LOCAL_C_INCLUDES += \
     system/media/camera/include \
     system/media/private/camera/include \
-    external/jpeg
+    external/jpeg \
+    external/stlport/stlport bionic/ bionic/libstdc++/include
 
 
 LOCAL_CFLAGS += -Wall -Wextra

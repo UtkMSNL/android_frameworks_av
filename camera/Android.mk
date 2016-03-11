@@ -37,7 +37,9 @@ LOCAL_SRC_FILES:= \
 	ProCamera.cpp \
 	CameraBase.cpp \
 	CameraUtils.cpp \
-	VendorTagDescriptor.cpp
+	VendorTagDescriptor.cpp \
+	RpcICameraClientProxy.cpp \
+	RpcICameraClientServer.cpp
 
 LOCAL_SHARED_LIBRARIES := \
 	libcutils \
@@ -48,10 +50,13 @@ LOCAL_SHARED_LIBRARIES := \
 	libui \
 	libgui \
 	libcamera_metadata \
+    libsrpc \
+	libstlport
 
 LOCAL_C_INCLUDES += \
 	system/media/camera/include \
 	system/media/private/camera/include \
+    external/stlport/stlport bionic/ bionic/libstdc++/include
 
 ifneq ($(TARGET_SPECIFIC_CAMERA_PARAMETER_LIBRARY),)
 LOCAL_WHOLE_STATIC_LIBRARIES += $(TARGET_SPECIFIC_CAMERA_PARAMETER_LIBRARY)

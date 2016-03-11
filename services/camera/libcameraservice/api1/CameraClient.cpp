@@ -19,10 +19,15 @@
 
 #include <cutils/properties.h>
 #include <gui/Surface.h>
+#include <gui/BufferQueue.h>
 
 #include "api1/CameraClient.h"
 #include "device1/CameraHardwareInterface.h"
 #include "CameraService.h"
+
+#include "RpcBufferConsumerListener.h"
+#include "RpcCameraClientProxy.h"
+#include <rpc/share_rpc.h>
 
 namespace android {
 
@@ -33,6 +38,8 @@ static int getCallingPid() {
     return IPCThreadState::self()->getCallingPid();
 }
 
+CameraClient::CameraClient() {}
+
 CameraClient::CameraClient(const sp<CameraService>& cameraService,
         const sp<ICameraClient>& cameraClient,
         const String16& clientPackageName,
@@ -42,6 +49,7 @@ CameraClient::CameraClient(const sp<CameraService>& cameraService,
         Client(cameraService, cameraClient, clientPackageName,
                 cameraId, cameraFacing, clientPid, clientUid, servicePid)
 {
+    ALOGE("rpc camera service CameraClient::CameraClient");
     int callingPid = getCallingPid();
     LOG1("CameraClient::CameraClient E (pid %d, id %d)", callingPid, cameraId);
 
@@ -60,6 +68,7 @@ CameraClient::CameraClient(const sp<CameraService>& cameraService,
 }
 
 status_t CameraClient::initialize(camera_module_t *module) {
+    ALOGE("rpc camera service CameraClient::initialize");
     int callingPid = getCallingPid();
     status_t res;
 
@@ -99,6 +108,7 @@ status_t CameraClient::initialize(camera_module_t *module) {
 
 // tear down the client
 CameraClient::~CameraClient() {
+    ALOGE("rpc camera service CameraClient::~CameraClient");
     // this lock should never be NULL
     Mutex* lock = mCameraService->getClientLockById(mCameraId);
     lock->lock();
@@ -160,6 +170,7 @@ status_t CameraClient::checkPidAndHardware() const {
 }
 
 status_t CameraClient::lock() {
+    ALOGE("rpc camera service CameraClient::lock");
     int callingPid = getCallingPid();
     LOG1("lock (pid %d)", callingPid);
     Mutex::Autolock lock(mLock);
@@ -175,6 +186,7 @@ status_t CameraClient::lock() {
 }
 
 status_t CameraClient::unlock() {
+    ALOGE("rpc camera service CameraClient::unlock");
     int callingPid = getCallingPid();
     LOG1("unlock (pid %d)", callingPid);
     Mutex::Autolock lock(mLock);
@@ -197,6 +209,7 @@ status_t CameraClient::unlock() {
 
 // connect a new client to the camera
 status_t CameraClient::connect(const sp<ICameraClient>& client) {
+    ALOGE("rpc camera service CameraClient::connect");
     int callingPid = getCallingPid();
     LOG1("connect E (pid %d)", callingPid);
     Mutex::Autolock lock(mLock);
@@ -233,6 +246,7 @@ static void disconnectWindow(const sp<ANativeWindow>& window) {
 }
 
 void CameraClient::disconnect() {
+    ALOGE("rpc camera service CameraClient::disconnect");
     int callingPid = getCallingPid();
     LOG1("disconnect E (pid %d)", callingPid);
     Mutex::Autolock lock(mLock);
@@ -279,6 +293,7 @@ void CameraClient::disconnect() {
 
 status_t CameraClient::setPreviewWindow(const sp<IBinder>& binder,
         const sp<ANativeWindow>& window) {
+    ALOGE("rpc camera service CameraClient::setPreviewWindow");
     Mutex::Autolock lock(mLock);
     status_t result = checkPidAndHardware();
     if (result != NO_ERROR) return result;
@@ -323,26 +338,57 @@ status_t CameraClient::setPreviewWindow(const sp<IBinder>& binder,
 }
 
 // set the buffer consumer that the preview will use
+static sp<RpcBufferConsumerListener> listenptr(0);
 status_t CameraClient::setPreviewTarget(
         const sp<IGraphicBufferProducer>& bufferProducer) {
+    ALOGE("rpc camera service CameraClient::setPreviewTarget");
     LOG1("setPreviewTarget(%p) (pid %d)", bufferProducer.get(),
             getCallingPid());
+    /*if ((int) bufferProducer.get() != -1) {
+        sp<IBinder> binder;
+        sp<ANativeWindow> window;
+        if (bufferProducer != 0) {
+            binder = bufferProducer->asBinder();
+            // Using controlledByApp flag to ensure that the buffer queue remains in
+            // async mode for the old camera API, where many applications depend
+            // on that behavior.
+            window = new Surface(bufferProducer, true);
+        }
+        return setPreviewWindow(binder, window);        
+    } */
+    // previous part of the code is for the implementation, this following part is only for the current camera preview support for paper writing
+    if (!CameraRpcUtilInst.isServer) {
+        RpcCameraClientProxy::mBufferProducer = bufferProducer;
+    } else {
+        listenptr = new RpcBufferConsumerListener();
+        sp<IGraphicBufferProducer> producer;
+        BufferQueue::createBufferQueue(&producer, &listenptr->mConsumer);
+        wp<BufferQueue::ConsumerListener> listener(listenptr);
+        sp<BufferQueue::ProxyConsumerListener> proxy = new BufferQueue::ProxyConsumerListener(listener);
+        producer->setBufferCount(BufferQueue::NUM_BUFFER_SLOTS);
+        //listenptr->mConsumer->setDefaultBufferSize(1022, 638);
+        //listenptr->mConsumer->setConsumerUsageBits(1342308352);
+        listenptr->mConsumer->consumerConnect(proxy, true);
 
-    sp<IBinder> binder;
-    sp<ANativeWindow> window;
-    if (bufferProducer != 0) {
-        binder = bufferProducer->asBinder();
-        // Using controlledByApp flag to ensure that the buffer queue remains in
-        // async mode for the old camera API, where many applications depend
-        // on that behavior.
-        window = new Surface(bufferProducer, /*controlledByApp*/ true);
+        sp<IBinder> binder;
+        sp<ANativeWindow> window;
+        if (bufferProducer != 0) {
+            binder = producer->asBinder();
+            // Using controlledByApp flag to ensure that the buffer queue remains in
+            // async mode for the old camera API, where many applications depend
+            // on that behavior.
+            window = new Surface(producer, /*controlledByApp*/ true);
+        }
+        return setPreviewWindow(binder, window);
     }
-    return setPreviewWindow(binder, window);
+    
+    return NO_ERROR;
 }
 
 // set the preview callback flag to affect how the received frames from
 // preview are handled.
 void CameraClient::setPreviewCallbackFlag(int callback_flag) {
+    ALOGE("rpc camera service CameraClient::setPreviewCallbackFlag");
     LOG1("setPreviewCallbackFlag(%d) (pid %d)", callback_flag, getCallingPid());
     Mutex::Autolock lock(mLock);
     if (checkPidAndHardware() != NO_ERROR) return;
@@ -357,6 +403,7 @@ void CameraClient::setPreviewCallbackFlag(int callback_flag) {
 
 status_t CameraClient::setPreviewCallbackTarget(
         const sp<IGraphicBufferProducer>& callbackProducer) {
+    ALOGE("rpc camera service CameraClient::setPreviewCallbackTarget");
     (void)callbackProducer;
     ALOGE("%s: Unimplemented!", __FUNCTION__);
     return INVALID_OPERATION;
@@ -364,6 +411,7 @@ status_t CameraClient::setPreviewCallbackTarget(
 
 // start preview mode
 status_t CameraClient::startPreview() {
+    ALOGE("rpc camera service CameraClient::startPreview");
     Mutex::Autolock lock(mLock);
     LOG1("startPreview (pid %d)", getCallingPid());
     return startCameraMode(CAMERA_PREVIEW_MODE);
@@ -371,6 +419,7 @@ status_t CameraClient::startPreview() {
 
 // start recording mode
 status_t CameraClient::startRecording() {
+    ALOGE("rpc camera service CameraClient::startRecording");
     Mutex::Autolock lock(mLock);
     LOG1("startRecording (pid %d)", getCallingPid());
     return startCameraMode(CAMERA_RECORDING_MODE);
@@ -378,6 +427,7 @@ status_t CameraClient::startRecording() {
 
 // start preview or recording
 status_t CameraClient::startCameraMode(camera_mode mode) {
+    ALOGE("rpc camera service CameraClient::startCameraMode");
     LOG1("startCameraMode(%d)", mode);
     status_t result = checkPidAndHardware();
     if (result != NO_ERROR) return result;
@@ -401,6 +451,7 @@ status_t CameraClient::startCameraMode(camera_mode mode) {
 }
 
 status_t CameraClient::startPreviewMode() {
+    ALOGE("rpc camera service CameraClient::startPreviewMode");
     LOG1("startPreviewMode");
     status_t result = NO_ERROR;
 
@@ -422,6 +473,7 @@ status_t CameraClient::startPreviewMode() {
 }
 
 status_t CameraClient::startRecordingMode() {
+    ALOGE("rpc camera service CameraClient::startRecordingMode");
     LOG1("startRecordingMode");
     status_t result = NO_ERROR;
 
@@ -450,6 +502,7 @@ status_t CameraClient::startRecordingMode() {
 
 // stop preview mode
 void CameraClient::stopPreview() {
+    ALOGE("rpc camera service CameraClient::stopPreview");
     LOG1("stopPreview (pid %d)", getCallingPid());
     Mutex::Autolock lock(mLock);
     if (checkPidAndHardware() != NO_ERROR) return;
@@ -472,6 +525,7 @@ void CameraClient::stopPreview() {
 
 // stop recording mode
 void CameraClient::stopRecording() {
+    ALOGE("rpc camera service CameraClient::stopRecording");
     LOG1("stopRecording (pid %d)", getCallingPid());
     Mutex::Autolock lock(mLock);
     if (checkPidAndHardware() != NO_ERROR) return;
@@ -494,6 +548,7 @@ void CameraClient::stopRecording() {
 
 // release a recording frame
 void CameraClient::releaseRecordingFrame(const sp<IMemory>& mem) {
+    ALOGE("rpc camera service CameraClient::releaseRecordingFrame");
     Mutex::Autolock lock(mLock);
     if (checkPidAndHardware() != NO_ERROR) return;
     mHardware->releaseRecordingFrame(mem);
@@ -501,6 +556,7 @@ void CameraClient::releaseRecordingFrame(const sp<IMemory>& mem) {
 
 status_t CameraClient::storeMetaDataInBuffers(bool enabled)
 {
+    ALOGE("rpc camera service CameraClient::storeMetaDataInBuffers");
     LOG1("storeMetaDataInBuffers: %s", enabled? "true": "false");
     Mutex::Autolock lock(mLock);
     if (checkPidAndHardware() != NO_ERROR) {
@@ -510,6 +566,7 @@ status_t CameraClient::storeMetaDataInBuffers(bool enabled)
 }
 
 bool CameraClient::previewEnabled() {
+    ALOGE("rpc camera service CameraClient::previewEnabled");
     LOG1("previewEnabled (pid %d)", getCallingPid());
 
     Mutex::Autolock lock(mLock);
@@ -518,6 +575,7 @@ bool CameraClient::previewEnabled() {
 }
 
 bool CameraClient::recordingEnabled() {
+    ALOGE("rpc camera service CameraClient::recordingEnabled");
     LOG1("recordingEnabled (pid %d)", getCallingPid());
 
     Mutex::Autolock lock(mLock);
@@ -526,6 +584,7 @@ bool CameraClient::recordingEnabled() {
 }
 
 status_t CameraClient::autoFocus() {
+    ALOGE("rpc camera service CameraClient::autoFocus");
     LOG1("autoFocus (pid %d)", getCallingPid());
 
     Mutex::Autolock lock(mLock);
@@ -536,6 +595,7 @@ status_t CameraClient::autoFocus() {
 }
 
 status_t CameraClient::cancelAutoFocus() {
+    ALOGE("rpc camera service CameraClient::cancelAutoFocus");
     LOG1("cancelAutoFocus (pid %d)", getCallingPid());
 
     Mutex::Autolock lock(mLock);
@@ -547,6 +607,7 @@ status_t CameraClient::cancelAutoFocus() {
 
 // take a picture - image is returned in callback
 status_t CameraClient::takePicture(int msgType) {
+    ALOGE("rpc camera service CameraClient::takePicture");
     LOG1("takePicture (pid %d): 0x%x", getCallingPid(), msgType);
 
     Mutex::Autolock lock(mLock);
@@ -580,6 +641,7 @@ status_t CameraClient::takePicture(int msgType) {
 
 // set preview/capture parameters - key/value pairs
 status_t CameraClient::setParameters(const String8& params) {
+    ALOGE("rpc camera service CameraClient::setParameters");
     LOG1("setParameters (pid %d) (%s)", getCallingPid(), params.string());
 
     Mutex::Autolock lock(mLock);
@@ -593,6 +655,7 @@ status_t CameraClient::setParameters(const String8& params) {
 
 // get preview/capture parameters - key/value pairs
 String8 CameraClient::getParameters() const {
+    ALOGE("rpc camera service CameraClient::getParameters");
     Mutex::Autolock lock(mLock);
     // The camera service can unconditionally get the parameters at all times
     if (getCallingPid() != mServicePid && checkPidAndHardware() != NO_ERROR) return String8();
@@ -604,6 +667,7 @@ String8 CameraClient::getParameters() const {
 
 // enable shutter sound
 status_t CameraClient::enableShutterSound(bool enable) {
+    ALOGE("rpc camera service CameraClient::enableShutterSound");
     LOG1("enableShutterSound (pid %d)", getCallingPid());
 
     status_t result = checkPidAndHardware();
@@ -639,6 +703,7 @@ status_t CameraClient::enableShutterSound(bool enable) {
 }
 
 status_t CameraClient::sendCommand(int32_t cmd, int32_t arg1, int32_t arg2) {
+    ALOGE("rpc camera service CameraClient::sendCommand");
     LOG1("sendCommand (pid %d)", getCallingPid());
     int orientation;
     Mutex::Autolock lock(mLock);
@@ -761,6 +826,7 @@ bool CameraClient::lockIfMessageWanted(int32_t msgType) {
 
 void CameraClient::notifyCallback(int32_t msgType, int32_t ext1,
         int32_t ext2, void* user) {
+    ALOGE("rpc camera service CameraClient::notifyCallback");
     LOG2("notifyCallback(%d)", msgType);
 
 #ifdef MTK_HARDWARE
@@ -798,6 +864,7 @@ void CameraClient::notifyCallback(int32_t msgType, int32_t ext1,
 
 void CameraClient::dataCallback(int32_t msgType,
         const sp<IMemory>& dataPtr, camera_frame_metadata_t *metadata, void* user) {
+    ALOGE("rpc camera service CameraClient::dataCallback");
     LOG2("dataCallback(%d)", msgType);
 
     Mutex* lock = getClientLockFromCookie(user);
@@ -864,6 +931,7 @@ void CameraClient::dataCallback(int32_t msgType,
 
 void CameraClient::dataCallbackTimestamp(nsecs_t timestamp,
         int32_t msgType, const sp<IMemory>& dataPtr, void* user) {
+    ALOGE("rpc camera service CameraClient::dataCallbackTimestamp");
     LOG2("dataCallbackTimestamp(%d)", msgType);
 
     Mutex* lock = getClientLockFromCookie(user);
@@ -887,6 +955,7 @@ void CameraClient::dataCallbackTimestamp(nsecs_t timestamp,
 
 // snapshot taken callback
 void CameraClient::handleShutter(void) {
+    ALOGE("rpc camera service CameraClient::handleShutter");
     if (mPlayShutterSound) {
         mCameraService->playSound(CameraService::SOUND_SHUTTER);
     }
@@ -908,6 +977,7 @@ void CameraClient::handleShutter(void) {
 void CameraClient::handlePreviewData(int32_t msgType,
                                               const sp<IMemory>& mem,
                                               camera_frame_metadata_t *metadata) {
+    ALOGE("rpc camera service CameraClient::handlePreviewData");
     ssize_t offset;
     size_t size;
     sp<IMemoryHeap> heap = mem->getMemory(&offset, &size);
@@ -952,6 +1022,7 @@ void CameraClient::handlePreviewData(int32_t msgType,
 
 // picture callback - postview image ready
 void CameraClient::handlePostview(const sp<IMemory>& mem) {
+    ALOGE("rpc camera service CameraClient::handlePostview");
     disableMsgType(CAMERA_MSG_POSTVIEW_FRAME);
 
     sp<ICameraClient> c = mRemoteCallback;
@@ -963,6 +1034,7 @@ void CameraClient::handlePostview(const sp<IMemory>& mem) {
 
 // picture callback - raw image ready
 void CameraClient::handleRawPicture(const sp<IMemory>& mem) {
+    ALOGE("rpc camera service CameraClient::handleRawPicture");
     disableMsgType(CAMERA_MSG_RAW_IMAGE);
 
     ssize_t offset;
@@ -978,6 +1050,7 @@ void CameraClient::handleRawPicture(const sp<IMemory>& mem) {
 
 // picture callback - compressed picture ready
 void CameraClient::handleCompressedPicture(const sp<IMemory>& mem) {
+    ALOGE("rpc camera service CameraClient::handleCompressedPicture");
     if (mBurstCnt)
         mBurstCnt--;
 
@@ -996,6 +1069,7 @@ void CameraClient::handleCompressedPicture(const sp<IMemory>& mem) {
 
 void CameraClient::handleGenericNotify(int32_t msgType,
     int32_t ext1, int32_t ext2) {
+    ALOGE("rpc camera service CameraClient::handleGenericNotify");
     sp<ICameraClient> c = mRemoteCallback;
     mLock.unlock();
     if (c != 0) {
@@ -1005,6 +1079,7 @@ void CameraClient::handleGenericNotify(int32_t msgType,
 
 void CameraClient::handleGenericData(int32_t msgType,
     const sp<IMemory>& dataPtr, camera_frame_metadata_t *metadata) {
+    ALOGE("rpc camera service CameraClient::handleGenericData");
     sp<ICameraClient> c = mRemoteCallback;
     mLock.unlock();
     if (c != 0) {
@@ -1014,6 +1089,7 @@ void CameraClient::handleGenericData(int32_t msgType,
 
 void CameraClient::handleGenericDataTimestamp(nsecs_t timestamp,
     int32_t msgType, const sp<IMemory>& dataPtr) {
+    ALOGE("rpc camera service CameraClient::handleGenericDataTimestamp");
     sp<ICameraClient> c = mRemoteCallback;
     mLock.unlock();
     if (c != 0) {
@@ -1025,6 +1101,7 @@ void CameraClient::copyFrameAndPostCopiedFrame(
         int32_t msgType, const sp<ICameraClient>& client,
         const sp<IMemoryHeap>& heap, size_t offset, size_t size,
         camera_frame_metadata_t *metadata) {
+    ALOGE("rpc camera service CameraClient::copyFrameAndPostCopiedFrame");
     LOG2("copyFrameAndPostCopiedFrame");
     // It is necessary to copy out of pmem before sending this to
     // the callback. For efficiency, reuse the same MemoryHeapBase
@@ -1073,6 +1150,7 @@ void CameraClient::copyFrameAndPostCopiedFrame(
 }
 
 int CameraClient::getOrientation(int degrees, bool mirror) {
+    ALOGE("rpc camera service CameraClient::getOrientation");
     if (!mirror) {
         if (degrees == 0) return 0;
         else if (degrees == 90) return HAL_TRANSFORM_ROT_90;

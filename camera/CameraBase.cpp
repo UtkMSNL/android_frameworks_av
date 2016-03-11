@@ -34,12 +34,15 @@
 
 #include <system/camera_metadata.h>
 
+#include <rpc/share_rpc.h>
+
 namespace android {
 
 namespace {
     sp<ICameraService>        gCameraService;
     const int                 kCameraServicePollDelay = 500000; // 0.5s
     const char*               kCameraServiceName      = "media.camera";
+    const char*               kRpcCameraServiceName   = "media.rpc_camera";
 
     Mutex                     gLock;
 
@@ -70,10 +73,17 @@ const sp<ICameraService>& CameraBase<TCam, TCamTraits>::getCameraService()
 {
     Mutex::Autolock _l(gLock);
     if (gCameraService.get() == 0) {
+        initAppConf();
+        const char* serviceName;
+        if (!AppRpcUtilInst.isShareEnabled || AppRpcUtilInst.isServer) {
+            serviceName = kCameraServiceName;
+        } else {
+            serviceName = kRpcCameraServiceName;
+        }
         sp<IServiceManager> sm = defaultServiceManager();
         sp<IBinder> binder;
         do {
-            binder = sm->getService(String16(kCameraServiceName));
+            binder = sm->getService(String16(serviceName));
             if (binder != 0) {
                 break;
             }

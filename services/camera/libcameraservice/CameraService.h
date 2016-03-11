@@ -169,6 +169,8 @@ public:
         virtual status_t    dump(int fd, const Vector<String16>& args) = 0;
 
     protected:
+        // Used by rpc
+        BasicClient() {}
         BasicClient(const sp<CameraService>& cameraService,
                 const sp<IBinder>& remoteCallback,
                 const String16& clientPackageName,
@@ -258,6 +260,8 @@ public:
         virtual String8       getParameters() const = 0;
         virtual status_t      sendCommand(int32_t cmd, int32_t arg1, int32_t arg2) = 0;
 
+        // Used by rpc
+        Client() {}
         // Interface used by CameraService
         Client(const sp<CameraService>& cameraService,
                 const sp<ICameraClient>& cameraClient,

@@ -50,6 +50,8 @@
 #include "utils/CameraTraces.h"
 #include "CameraDeviceFactory.h"
 
+#include <rpc/share_rpc.h>
+
 namespace android {
 
 // ----------------------------------------------------------------------------
@@ -97,6 +99,9 @@ static CameraService *gCameraService;
 CameraService::CameraService()
     :mSoundRef(0), mModule(0)
 {
+    CameraRpcUtilInst.cameraService = this;
+    
+    ALOGE("rpc camera service constructor CameraService()");
     ALOGI("CameraService started (pid=%d)", getpid());
     gCameraService = this;
 
@@ -109,6 +114,7 @@ CameraService::CameraService()
 
 void CameraService::onFirstRef()
 {
+    ALOGE("rpc camera service onFirstRef()");
     LOG1("CameraService::onFirstRef");
 
     BnCameraService::onFirstRef();
@@ -159,6 +165,7 @@ CameraService::~CameraService() {
 void CameraService::onDeviceStatusChanged(int cameraId,
                                           int newStatus)
 {
+    ALOGE("rpc camera service onDeviceStatusChanged()");
     ALOGI("%s: Status changed for cameraId=%d, newStatus=%d", __FUNCTION__,
           cameraId, newStatus);
 
@@ -226,6 +233,7 @@ int32_t CameraService::getNumberOfCameras() {
 
 status_t CameraService::getCameraInfo(int cameraId,
                                       struct CameraInfo* cameraInfo) {
+    ALOGE("rpc camera service CameraService::getNumberOfCameras()");
     if (!mModule) {
         return -ENODEV;
     }
@@ -244,6 +252,7 @@ status_t CameraService::getCameraInfo(int cameraId,
 
 
 status_t CameraService::generateShimMetadata(int cameraId, /*out*/CameraMetadata* cameraInfo) {
+    ALOGE("rpc camera service CameraService::generateShimMetadata()");
     status_t ret = OK;
     struct CameraInfo info;
     if ((ret = getCameraInfo(cameraId, &info)) != OK) {
@@ -330,6 +339,7 @@ status_t CameraService::generateShimMetadata(int cameraId, /*out*/CameraMetadata
 
 status_t CameraService::getCameraCharacteristics(int cameraId,
                                                 CameraMetadata* cameraInfo) {
+    ALOGE("rpc camera service CameraService::getCameraCharacteristics()");
     if (!cameraInfo) {
         ALOGE("%s: cameraInfo is NULL", __FUNCTION__);
         return BAD_VALUE;
@@ -376,6 +386,7 @@ status_t CameraService::getCameraCharacteristics(int cameraId,
 }
 
 status_t CameraService::getCameraVendorTagDescriptor(/*out*/sp<VendorTagDescriptor>& desc) {
+    ALOGE("rpc camera service CameraService::getCameraVendorTagDescriptor()");
     if (!mModule) {
         ALOGE("%s: camera hardware module doesn't exist", __FUNCTION__);
         return -ENODEV;
@@ -386,6 +397,7 @@ status_t CameraService::getCameraVendorTagDescriptor(/*out*/sp<VendorTagDescript
 }
 
 int CameraService::getDeviceVersion(int cameraId, int* facing) {
+    ALOGE("rpc camera service CameraService::getDeviceVersion()");
     struct camera_info info;
     if (mModule->get_camera_info(cameraId, &info) != OK) {
         return -1;
@@ -406,6 +418,7 @@ int CameraService::getDeviceVersion(int cameraId, int* facing) {
 }
 
 status_t CameraService::filterOpenErrorCode(status_t err) {
+    ALOGE("rpc camera service CameraService::filterOpenErrorCode()");
     switch(err) {
         case NO_ERROR:
         case -EBUSY:
@@ -419,6 +432,7 @@ status_t CameraService::filterOpenErrorCode(status_t err) {
 }
 
 status_t CameraService::filterGetInfoErrorCode(status_t err) {
+    ALOGE("rpc camera service CameraService::filterGetInfoErrorCode()");
     switch(err) {
         case NO_ERROR:
         case -EINVAL:
@@ -430,6 +444,7 @@ status_t CameraService::filterGetInfoErrorCode(status_t err) {
 }
 
 bool CameraService::setUpVendorTags() {
+    ALOGE("rpc camera service CameraService::setUpVendorTags()");
     vendor_tag_ops_t vOps = vendor_tag_ops_t();
 
     // Check if vendor operations have been implemented
@@ -468,6 +483,7 @@ bool CameraService::setUpVendorTags() {
 }
 
 status_t CameraService::initializeShimMetadata(int cameraId) {
+    ALOGE("rpc camera service CameraService::initializeShimMetadata()");
     int pid = getCallingPid();
     int uid = getCallingUid();
     status_t ret = validateConnect(cameraId, uid);
@@ -520,6 +536,7 @@ status_t CameraService::initializeShimMetadata(int cameraId) {
 status_t CameraService::getLegacyParametersLazy(int cameraId,
         /*out*/
         CameraParameters* parameters) {
+    ALOGE("rpc camera service CameraService::getLegacyParametersLazy()");
 
     ALOGV("%s: for cameraId: %d", __FUNCTION__, cameraId);
 
@@ -566,6 +583,7 @@ status_t CameraService::getLegacyParametersLazy(int cameraId,
 status_t CameraService::validateConnect(int cameraId,
                                     /*inout*/
                                     int& clientUid) const {
+    ALOGE("rpc camera service CameraService::validateConnect()");
 
     int callingPid = getCallingPid();
 
@@ -619,6 +637,7 @@ bool CameraService::canConnectUnsafe(int cameraId,
                                      const String16& clientPackageName,
                                      const sp<IBinder>& remoteCallback,
                                      sp<BasicClient> &client) {
+    ALOGE("rpc camera service CameraService::canConnectUnsafe()");
     String8 clientName8(clientPackageName);
     int callingPid = getCallingPid();
 
@@ -670,6 +689,7 @@ status_t CameraService::connectHelperLocked(
         int callingPid,
         int halVersion,
         bool legacyMode) {
+    ALOGE("rpc camera service CameraService::connectHelperLocked()");
 
     int facing = -1;
     int deviceVersion = getDeviceVersion(cameraId, &facing);
@@ -679,6 +699,7 @@ status_t CameraService::connectHelperLocked(
         // based on device version reported by the HAL.
         switch(deviceVersion) {
           case CAMERA_DEVICE_API_VERSION_1_0:
+            ALOGE("rpc camera service create CameraClient");
             client = new CameraClient(this, cameraClient,
                     clientPackageName, cameraId,
                     facing, callingPid, clientUid, getpid(), legacyMode);
@@ -688,6 +709,7 @@ status_t CameraService::connectHelperLocked(
           case CAMERA_DEVICE_API_VERSION_3_0:
           case CAMERA_DEVICE_API_VERSION_3_1:
           case CAMERA_DEVICE_API_VERSION_3_2:
+            ALOGE("rpc camera service create Camera2Client");
             client = new Camera2Client(this, cameraClient,
                     clientPackageName, cameraId,
                     facing, callingPid, clientUid, getpid(), legacyMode);
@@ -704,6 +726,7 @@ status_t CameraService::connectHelperLocked(
         // based on the requested HAL version.
         if (deviceVersion > CAMERA_DEVICE_API_VERSION_1_0 &&
             halVersion == CAMERA_DEVICE_API_VERSION_1_0) {
+            ALOGE("rpc camera service create CameraClient in else");
             // Only support higher HAL version device opened as HAL1.0 device.
             client = new CameraClient(this, cameraClient,
                     clientPackageName, cameraId,
@@ -737,6 +760,7 @@ status_t CameraService::connect(
         int clientUid,
         /*out*/
         sp<ICamera>& device) {
+    ALOGE("rpc camera service CameraService::connect()");
 
     String8 clientName8(clientPackageName);
     int callingPid = getCallingPid();
@@ -788,6 +812,7 @@ status_t CameraService::connectLegacy(
         int clientUid,
         /*out*/
         sp<ICamera>& device) {
+    ALOGE("rpc camera service CameraService::connectLegacy()");
 
     if (halVersion != CAMERA_HAL_API_VERSION_UNSPECIFIED &&
             mModule->common.module_api_version < CAMERA_MODULE_API_VERSION_2_3) {
@@ -848,6 +873,7 @@ status_t CameraService::connectLegacy(
 
 status_t CameraService::connectFinishUnsafe(const sp<BasicClient>& client,
                                             const sp<IBinder>& remoteCallback) {
+    ALOGE("rpc camera service CameraService::connectFinishUnsafe()");
     status_t status = client->initialize(mModule);
     if (status != OK) {
         ALOGE("%s: Could not initialize client from HAL module.", __FUNCTION__);
@@ -868,6 +894,7 @@ status_t CameraService::connectPro(
                                         /*out*/
                                         sp<IProCameraUser>& device)
 {
+    ALOGE("rpc camera service CameraService::connectPro()");
     if (cameraCb == 0) {
         ALOGE("%s: Callback must not be null", __FUNCTION__);
         return BAD_VALUE;
@@ -944,6 +971,7 @@ status_t CameraService::connectDevice(
         /*out*/
         sp<ICameraDeviceUser>& device)
 {
+    ALOGE("rpc camera service CameraService::connectDevice()");
 
     String8 clientName8(clientPackageName);
     int callingPid = getCallingPid();
@@ -1013,6 +1041,7 @@ status_t CameraService::connectDevice(
 
 status_t CameraService::addListener(
                                 const sp<ICameraServiceListener>& listener) {
+    ALOGE("rpc camera service CameraService::addListener()");
     ALOGV("%s: Add listener %p", __FUNCTION__, listener.get());
 
     if (listener == 0) {
@@ -1046,6 +1075,7 @@ status_t CameraService::addListener(
 }
 status_t CameraService::removeListener(
                                 const sp<ICameraServiceListener>& listener) {
+    ALOGE("rpc camera service CameraService::removeListener()");
     ALOGV("%s: Remove listener %p", __FUNCTION__, listener.get());
 
     if (listener == 0) {
@@ -1073,6 +1103,7 @@ status_t CameraService::getLegacyParameters(
             int cameraId,
             /*out*/
             String16* parameters) {
+    ALOGE("rpc camera service CameraService::getLegacyParameters()");
     ALOGV("%s: for camera ID = %d", __FUNCTION__, cameraId);
 
     if (parameters == NULL) {
@@ -1097,6 +1128,7 @@ status_t CameraService::getLegacyParameters(
 }
 
 status_t CameraService::supportsCameraApi(int cameraId, int apiVersion) {
+    ALOGE("rpc camera service CameraService::supportsCameraApi()");
     ALOGV("%s: for camera ID = %d", __FUNCTION__, cameraId);
 
     switch (apiVersion) {
@@ -1142,6 +1174,7 @@ status_t CameraService::supportsCameraApi(int cameraId, int apiVersion) {
 }
 
 void CameraService::removeClientByRemote(const wp<IBinder>& remoteBinder) {
+    ALOGE("rpc camera service CameraService::removeClientByRemote()");
     int callingPid = getCallingPid();
     LOG1("CameraService::removeClientByRemote E (pid %d)", callingPid);
 
@@ -1180,6 +1213,7 @@ void CameraService::removeClientByRemote(const wp<IBinder>& remoteBinder) {
 sp<CameraService::ProClient> CameraService::findProClientUnsafe(
                         const wp<IBinder>& cameraCallbacksRemote)
 {
+    ALOGE("rpc camera service CameraService::findProClientUnsafe()");
     sp<ProClient> clientPro;
 
     for (int i = 0; i < mNumberOfCameras; ++i) {
@@ -1210,6 +1244,7 @@ sp<CameraService::ProClient> CameraService::findProClientUnsafe(
 
 sp<CameraService::BasicClient> CameraService::findClientUnsafe(
                         const wp<IBinder>& cameraClient, int& outIndex) {
+    ALOGE("rpc camera service CameraService::findClientUnsafe()");
     sp<BasicClient> client;
 
     for (int i = 0; i < mNumberOfCameras; i++) {
@@ -1234,17 +1269,20 @@ sp<CameraService::BasicClient> CameraService::findClientUnsafe(
 }
 
 CameraService::BasicClient* CameraService::getClientByIdUnsafe(int cameraId) {
+    ALOGE("rpc camera service CameraService::getClientByIdUnsafe()");
     if (cameraId < 0 || cameraId >= mNumberOfCameras) return NULL;
     return mClient[cameraId].unsafe_get();
 }
 
 Mutex* CameraService::getClientLockById(int cameraId) {
+    ALOGE("rpc camera service constructor onFirstRef()");
     if (cameraId < 0 || cameraId >= mNumberOfCameras) return NULL;
     return &mClientLock[cameraId];
 }
 
 sp<CameraService::BasicClient> CameraService::getClientByRemote(
                                 const wp<IBinder>& cameraClient) {
+    ALOGE("rpc camera service CameraService::getClientByRemote()");
 
     // Declare this before the lock to make absolutely sure the
     // destructor won't be called with the lock held.
@@ -1291,12 +1329,14 @@ status_t CameraService::onTransact(
 // to be created because we need to wait for the previous Client to tear down
 // the hardware first.
 void CameraService::setCameraBusy(int cameraId) {
+    ALOGE("rpc camera service CameraService::setCameraBusy()");
     android_atomic_write(1, &mBusy[cameraId]);
 
     ALOGV("setCameraBusy cameraId=%d", cameraId);
 }
 
 void CameraService::setCameraFree(int cameraId) {
+    ALOGE("rpc camera service CameraService::setCameraFree()");
     android_atomic_write(0, &mBusy[cameraId]);
 
     ALOGV("setCameraFree cameraId=%d", cameraId);
@@ -1307,6 +1347,7 @@ void CameraService::setCameraFree(int cameraId) {
 // media players.
 
 MediaPlayer* CameraService::newMediaPlayer(const char *file) {
+    ALOGE("rpc camera service CameraService::newMediaPlayer()");
     MediaPlayer* mp = new MediaPlayer();
     if (mp->setDataSource(NULL /* httpService */, file, NULL) == NO_ERROR) {
         mp->setAudioStreamType(AUDIO_STREAM_ENFORCED_AUDIBLE);
@@ -1319,6 +1360,7 @@ MediaPlayer* CameraService::newMediaPlayer(const char *file) {
 }
 
 void CameraService::loadSound() {
+    ALOGE("rpc camera service CameraService::loadSound()");
     Mutex::Autolock lock(mSoundLock);
     LOG1("CameraService::loadSound ref=%d", mSoundRef);
     if (mSoundRef++) return;
@@ -1328,6 +1370,7 @@ void CameraService::loadSound() {
 }
 
 void CameraService::releaseSound() {
+    ALOGE("rpc camera service CameraService::releaseSound()");
     Mutex::Autolock lock(mSoundLock);
     LOG1("CameraService::releaseSound ref=%d", mSoundRef);
     if (--mSoundRef) return;
@@ -1341,6 +1384,7 @@ void CameraService::releaseSound() {
 }
 
 void CameraService::playSound(sound_kind kind) {
+    ALOGE("rpc camera service CameraService::playSound()");
     LOG1("playSound(%d)", kind);
     Mutex::Autolock lock(mSoundLock);
     sp<MediaPlayer> player = mSoundPlayer[kind];
@@ -1364,6 +1408,7 @@ CameraService::Client::Client(const sp<CameraService>& cameraService,
                 clientPid, clientUid,
                 servicePid)
 {
+    ALOGE("rpc camera service CameraService::Client::Client()");
     int callingPid = getCallingPid();
     LOG1("Client::Client E (pid %d, id %d)", callingPid, cameraId);
 
@@ -1378,6 +1423,7 @@ CameraService::Client::Client(const sp<CameraService>& cameraService,
 
 // tear down the client
 CameraService::Client::~Client() {
+    ALOGE("rpc camera service CameraService::Client::~Client()");
     ALOGV("~Client");
     mDestructionStarted = true;
 
@@ -1394,6 +1440,7 @@ CameraService::BasicClient::BasicClient(const sp<CameraService>& cameraService,
         int servicePid):
         mClientPackageName(clientPackageName)
 {
+    ALOGE("rpc camera service CameraService::BasicClient::BasicClient()");
     mCameraService = cameraService;
     mRemoteBinder = remoteCallback;
     mCameraId = cameraId;
@@ -1407,11 +1454,13 @@ CameraService::BasicClient::BasicClient(const sp<CameraService>& cameraService,
 }
 
 CameraService::BasicClient::~BasicClient() {
+    ALOGE("rpc camera service CameraService::BasicClient::~BasicClient()");
     ALOGV("~BasicClient");
     mDestructionStarted = true;
 }
 
 void CameraService::BasicClient::disconnect() {
+    ALOGE("rpc camera service CameraService::BasicClient::disconnect");
     ALOGV("BasicClient::disconnect");
     mCameraService->removeClientByRemote(mRemoteBinder);
 
@@ -1421,6 +1470,7 @@ void CameraService::BasicClient::disconnect() {
 }
 
 status_t CameraService::BasicClient::startCameraOps() {
+    ALOGE("rpc camera service CameraService::BasicClient::startCameraOps()");
     int32_t res;
     // Notify app ops that the camera is not available
     mOpsCallback = new OpsCallback(this);
@@ -1451,6 +1501,7 @@ status_t CameraService::BasicClient::startCameraOps() {
 }
 
 status_t CameraService::BasicClient::finishCameraOps() {
+    ALOGE("rpc camera service CameraService::BasicClient::finishCameraOps()");
     // Check if startCameraOps succeeded, and if so, finish the camera op
     if (mOpsActive) {
         // Notify app ops that the camera is available again
@@ -1480,6 +1531,7 @@ status_t CameraService::BasicClient::finishCameraOps() {
 }
 
 void CameraService::BasicClient::opChanged(int32_t op, const String16& packageName) {
+    ALOGE("rpc camera service CameraService::BasicClient::opChanged()");
     String8 name(packageName);
     String8 myName(mClientPackageName);
 
@@ -1512,12 +1564,14 @@ void CameraService::BasicClient::opChanged(int32_t op, const String16& packageNa
 // ----------------------------------------------------------------------------
 
 Mutex* CameraService::Client::getClientLockFromCookie(void* user) {
+    ALOGE("rpc camera service CameraService::Client::getClientLockFromCookie()");
     return gCameraService->getClientLockById((int)(intptr_t) user);
 }
 
 // Provide client pointer for callbacks. Client lock returned from getClientLockFromCookie should
 // be acquired for this to be safe
 CameraService::Client* CameraService::Client::getClientFromCookie(void* user) {
+    ALOGE("rpc camera service CameraService::Client::getClientFromCookie()");
     BasicClient *basicClient = gCameraService->getClientByIdUnsafe((int)(intptr_t) user);
     // OK: only CameraClient calls this, and they already cast anyway.
     Client* client = static_cast<Client*>(basicClient);
@@ -1535,11 +1589,13 @@ CameraService::Client* CameraService::Client::getClientFromCookie(void* user) {
 
 void CameraService::Client::notifyError(ICameraDeviceCallbacks::CameraErrorCode errorCode,
         const CaptureResultExtras& resultExtras) {
+    ALOGE("rpc camera service CameraService::Client::notifyError()");
     mRemoteCallback->notifyCallback(CAMERA_MSG_ERROR, CAMERA_ERROR_RELEASED, 0);
 }
 
 // NOTE: function is idempotent
 void CameraService::Client::disconnect() {
+    ALOGE("rpc camera service CameraService::Client::disconnect()");
     ALOGV("Client::disconnect");
     BasicClient::disconnect();
     mCameraService->setCameraFree(mCameraId);
@@ -1581,6 +1637,7 @@ CameraService::ProClient::~ProClient() {
 
 void CameraService::ProClient::notifyError(ICameraDeviceCallbacks::CameraErrorCode errorCode,
         const CaptureResultExtras& resultExtras) {
+    ALOGE("rpc camera service CameraService::ProClient::notifyError()");
     mRemoteCallback->notifyCallback(CAMERA_MSG_ERROR, CAMERA_ERROR_RELEASED, 0);
 }
 
@@ -1745,6 +1802,7 @@ status_t CameraService::dump(int fd, const Vector<String16>& args) {
 void CameraService::updateStatus(ICameraServiceListener::Status status,
                                  int32_t cameraId,
                                  const StatusVector *rejectSourceStates) {
+    ALOGE("rpc camera service CameraService::updateStatus()");
     // do not lock mServiceLock here or can get into a deadlock from
     //  connect() -> ProClient::disconnect -> updateStatus
     Mutex::Autolock lock(mStatusMutex);
@@ -1812,6 +1870,7 @@ void CameraService::updateStatus(ICameraServiceListener::Status status,
 }
 
 ICameraServiceListener::Status CameraService::getStatus(int cameraId) const {
+    ALOGE("rpc camera service CameraService::getStatus()");
     if (cameraId < 0 || cameraId >= MAX_CAMERAS) {
         ALOGE("%s: Invalid camera ID %d", __FUNCTION__, cameraId);
         return ICameraServiceListener::STATUS_UNKNOWN;
