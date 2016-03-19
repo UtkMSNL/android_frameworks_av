@@ -52,7 +52,7 @@
 using namespace android;
 
 static void* initMediaRpc(void* args) {
-    while (!isNetworkReady()) {
+    while (!isNetworkReady("/data/data/media_server/net_ready")) {
         ALOGE("rpc audio service the network is still not available");
         sleep(1);
     }
