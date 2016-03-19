@@ -1,17 +1,100 @@
 
 #include <utils/Log.h>
 #include <ui/PixelFormat.h>
+#include <cstdlib>
 
 #include "RpcBufferConsumerListener.h"
 #include "RpcCameraClientServer.h"
 
+#include <pthread.h>
+
 namespace android {
+
+static pthread_mutex_t lock;
+static pthread_cond_t cond;
+static sp<IGraphicBufferConsumer> consumer;
+static sp<GraphicBuffer> mBufferSlot[BufferQueue::NUM_BUFFER_SLOTS];
+
+static bool isFirst = true;
+
+static void* prvthLoop(void* args)
+{
+    while (true) {
+        pthread_mutex_lock(&lock);
+        // get an available buffer from the camera preview
+        BufferQueue::BufferItem* item = new BufferQueue::BufferItem();
+        status_t err = consumer->acquireBuffer(item, 0);
+        if (err != OK) {
+            pthread_cond_wait(&cond, &lock);
+            pthread_mutex_unlock(&lock);
+            continue;
+        }
+        pthread_mutex_unlock(&lock);
+        
+        err = item->mFence->waitForever("RpcBufferConsumerListener::onFrameAvailable");
+        ALOGE("a buffer item is available after wait %p, %d, %d", item->mFence.get(), item->mBuf, BufferQueueDefs::NUM_BUFFER_SLOTS);
+        if (err != OK) {
+            ALOGW("failed to wait for buffer fence: %d", err);
+            // keep going
+        }
+        if (item->mGraphicBuffer != NULL) {
+            ALOGV("RpcBufferConsumerListener::onFrameAvailable: setting mBufferSlot %d", item->mBuf);
+            mBufferSlot[item->mBuf] = item->mGraphicBuffer;
+        }
+        int buf = item->mBuf;
+        int frameNumber = item->mFrameNumber;
+        sp<GraphicBuffer> src = mBufferSlot[item->mBuf];
+        sp<Fence> fence = item->mFence;
+        delete item;
+        
+        int width = src->width;
+        int height = src->height;
+        int stride = src->stride;
+        int format = src->format;
+        int usage = src->usage;
+        
+        uint8_t const * src_bits = NULL;
+        err = src->lock(GRALLOC_USAGE_SW_READ_OFTEN, (void**)&src_bits);
+        ALOGE_IF(err, "error locking src buffer %s", strerror(-err));
+        // FIXME: set the bytes per pixel through the pixel format
+        const size_t bpp = 1;
+        const size_t bpr = stride * bpp;
+        const size_t size = bpr * height + ((bpr + 1) / 2) * ((height + 1) / 2) * 2;
+        //format = 0x11c;
+        refreshPreviewWindow(src_bits, size, width, height, stride, format, usage);
+        if (src_bits)
+            src->unlock();
+
+        ALOGI("a buffer item is available with data size[%d], width[%d], height[%d], format[%#x]", size, width, height, format);
+        // release the prevew buffer
+        err = consumer->releaseBuffer(buf, frameNumber, EGL_NO_DISPLAY, EGL_NO_SYNC_KHR, fence);
+        ALOGE_IF(err, "error release buffer %s, err, %d", strerror(-err), err);
+    }
+    return NULL;
+}
 
 void RpcBufferConsumerListener::onFrameAvailable(const BufferItem& /*item*/)
 {
-    // get an available buffer from the camera preview
-    BufferQueue::BufferItem item;
-    status_t err = mConsumer->acquireBuffer(&item, 0);
+    if (isFirst) {
+        isFirst = false;
+        pthread_mutex_init(&lock, NULL);
+        pthread_cond_init(&cond, NULL);
+        pthread_t rpcThread;
+        pthread_create(&rpcThread, NULL, prvthLoop, NULL);
+    }
+    pthread_mutex_lock(&lock);
+    consumer = mConsumer;
+    pthread_cond_signal(&cond);
+    pthread_mutex_unlock(&lock);
+    
+    // this part is moved into a thread because the samsumg phone have the problem
+    // the problem is that: after calling graphicBuffer->lock(), the data content in the BufferItem is changed
+    // this makes the destruction of the item throw a runtime error
+    /*// get an available buffer from the camera preview
+    BufferQueue::BufferItem* item = new BufferQueue::BufferItem();
+    ALOGE("a buffer item is available with %p", item);
+    status_t err = mConsumer->acquireBuffer(item, 0);
+    ALOGE("a buffer item is available with %p", item);
     if (err == BufferQueue::NO_BUFFER_AVAILABLE) {
         // shouldn't happen
         ALOGW("RpcBufferConsumerListener::onFrameAvailable: frame was not available");
@@ -21,16 +104,24 @@ void RpcBufferConsumerListener::onFrameAvailable(const BufferItem& /*item*/)
         ALOGW("RpcBufferConsumerListener::onFrameAvailable: acquireBuffer returned err=%d", err);
         return;
     }
-    err = item.mFence->waitForever("RpcBufferConsumerListener::onFrameAvailable");
+    ALOGE("a buffer item is available with data %p, %d, %d", item->mFence.get(), item->mBuf, BufferQueueDefs::NUM_BUFFER_SLOTS);
+    err = item->mFence->waitForever("RpcBufferConsumerListener::onFrameAvailable");
+    ALOGE("a buffer item is available after wait %p, %d, %d", item->mFence.get(), item->mBuf, BufferQueueDefs::NUM_BUFFER_SLOTS);
     if (err != OK) {
         ALOGW("failed to wait for buffer fence: %d", err);
         // keep going
     }
-    if (item.mGraphicBuffer != NULL) {
-        ALOGV("RpcBufferConsumerListener::onFrameAvailable: setting mBufferSlot %d", item.mBuf);
-        mBufferSlot[item.mBuf] = item.mGraphicBuffer;
+    if (item->mGraphicBuffer != NULL) {
+        ALOGV("RpcBufferConsumerListener::onFrameAvailable: setting mBufferSlot %d", item->mBuf);
+        mBufferSlot[item->mBuf] = item->mGraphicBuffer;
     }
-    sp<GraphicBuffer> src = mBufferSlot[item.mBuf];
+    ALOGE("a buffer item is available with data size 1:  %p, %d, %d", item->mFence.get(), item->mBuf, BufferQueueDefs::NUM_BUFFER_SLOTS);
+    int buf = item->mBuf;
+    int frameNumber = item->mFrameNumber;
+    sp<GraphicBuffer> src = mBufferSlot[item->mBuf];
+    sp<Fence> fence = item->mFence;
+    ALOGE("a buffer item is available with data size 2:  %p, %d, %d, %p", item->mFence.get(), item->mBuf, BufferQueueDefs::NUM_BUFFER_SLOTS, src.get());
+    delete item;
     
     int width = src->width;
     int height = src->height;
@@ -39,19 +130,25 @@ void RpcBufferConsumerListener::onFrameAvailable(const BufferItem& /*item*/)
     int usage = src->usage;
     
     uint8_t const * src_bits = NULL;
-    err = src->lock(GRALLOC_USAGE_SW_READ_OFTEN, (void**)&src_bits);
+    err = src->lock(GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_RARELY, (void**)&src_bits);
+    //ALOGE("a buffer item is available with data size 3: %p, %d, %d, %p, format: %#x", item->mFence.get(), item->mBuf, BufferQueueDefs::NUM_BUFFER_SLOTS, item->mGraphicBuffer.get(), format);
     ALOGE_IF(err, "error locking src buffer %s", strerror(-err));
     // FIXME: set the bytes per pixel through the pixel format
     const size_t bpp = 1;
     const size_t bpr = stride * bpp;
     const size_t size = bpr * height + ((bpr + 1) / 2) * ((height + 1) / 2) * 2;
+    //ALOGE("a buffer item is available with data size 4: %d, %p, %d, %d", size, item.mFence.get(), item.mBuf, BufferQueueDefs::NUM_BUFFER_SLOTS);
+    uint8_t* data = (uint8_t*) malloc(size);
+    memcpy(data, src_bits, size);
     refreshPreviewWindow(src_bits, size, width, height, stride, format, usage);
+    //ALOGE("a buffer item is available with data size 5: %d, %p, %d, %d", size, item.mFence.get(), item.mBuf, BufferQueueDefs::NUM_BUFFER_SLOTS);
     if (src_bits)
         src->unlock();
 
-    ALOGE("a buffer item is available with data size: %d", size);
+    //ALOGE("a buffer item is available with data size: %d, %p, %d, %d", size, fence.get(), item.mBuf, BufferQueueDefs::NUM_BUFFER_SLOTS);
     // release the prevew buffer
-    mConsumer->releaseBuffer(item.mBuf, item.mFrameNumber, EGL_NO_DISPLAY, EGL_NO_SYNC_KHR, item.mFence);
+    err = mConsumer->releaseBuffer(buf, frameNumber, EGL_NO_DISPLAY, EGL_NO_SYNC_KHR, fence);
+    ALOGE_IF(err, "error release buffer %s, err, %d", strerror(-err), err);*/
     
     /*/ dequeue a buffer from the actual preview target
     int width = src->width;
