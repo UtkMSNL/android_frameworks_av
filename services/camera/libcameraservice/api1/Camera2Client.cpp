@@ -34,6 +34,10 @@
 #include "api1/client2/ZslProcessor.h"
 #include "api1/client2/ZslProcessor3.h"
 
+#include "RpcBufferConsumerListener.h"
+#include "RpcCameraClientProxy.h"
+#include <rpc/share_rpc.h>
+
 #define ALOG1(...) ALOGD_IF(gLogLevel >= 1, __VA_ARGS__);
 #define ALOG2(...) ALOGD_IF(gLogLevel >= 2, __VA_ARGS__);
 
@@ -520,6 +524,7 @@ status_t Camera2Client::unlock() {
     return EBUSY;
 }
 
+static sp<RpcBufferConsumerListener> listenptr(0);
 status_t Camera2Client::setPreviewTarget(
         const sp<IGraphicBufferProducer>& bufferProducer) {
     ATRACE_CALL();
@@ -528,16 +533,41 @@ status_t Camera2Client::setPreviewTarget(
     status_t res;
     if ( (res = checkPid(__FUNCTION__) ) != OK) return res;
 
-    sp<IBinder> binder;
-    sp<ANativeWindow> window;
-    if (bufferProducer != 0) {
-        binder = bufferProducer->asBinder();
+    if (!CameraRpcUtilInst.isServer) {
+        RpcCameraClientProxy::mBufferProducer = bufferProducer;
+    } else {
+        listenptr = new RpcBufferConsumerListener();
+        sp<IGraphicBufferProducer> producer;
+        BufferQueue::createBufferQueue(&producer, &listenptr->mConsumer);
+        wp<BufferQueue::ConsumerListener> listener(listenptr);
+        sp<BufferQueue::ProxyConsumerListener> proxy = new BufferQueue::ProxyConsumerListener(listener);
+        producer->setBufferCount(BufferQueue::NUM_BUFFER_SLOTS);
+        //listenptr->mConsumer->setDefaultBufferSize(1022, 638);
+        //listenptr->mConsumer->setConsumerUsageBits(1342308352);
+        listenptr->mConsumer->consumerConnect(proxy, true);
+
+        sp<IBinder> binder;
+        sp<ANativeWindow> window;
+        if (bufferProducer != 0) {
+            binder = producer->asBinder();
+            // Using controlledByApp flag to ensure that the buffer queue remains in
+            // async mode for the old camera API, where many applications depend
+            // on that behavior.
+            window = new Surface(producer, /*controlledByApp*/ true);
+        }
+        return setPreviewWindowL(binder, window);
+    }
+    //sp<IBinder> binder;
+    //sp<ANativeWindow> window;
+    //if (bufferProducer != 0) {
+    //    binder = bufferProducer->asBinder();
         // Using controlledByApp flag to ensure that the buffer queue remains in
         // async mode for the old camera API, where many applications depend
         // on that behavior.
-        window = new Surface(bufferProducer, /*controlledByApp*/ true);
-    }
-    return setPreviewWindowL(binder, window);
+    //    window = new Surface(bufferProducer, /*controlledByApp*/ true);
+    //}
+    //return setPreviewWindowL(binder, window);
+    return NO_ERROR;
 }
 
 status_t Camera2Client::setPreviewWindowL(const sp<IBinder>& binder,

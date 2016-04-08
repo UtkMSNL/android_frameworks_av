@@ -281,7 +281,7 @@ private:
     class RpcTrackHandleProxy : public AudioFlinger::TrackHandle {
     public:
                             RpcTrackHandleProxy(const sp<RpcAudioFlinger::RpcDummyTrack>& track, const int remoteServiceId);
-        virtual             ~RpcTrackHandleProxy();
+        /*virtual */            ~RpcTrackHandleProxy();
         virtual sp<IMemory> getCblk() const;
         virtual status_t    start();
         virtual void        stop();

@@ -45,6 +45,7 @@
 
 // method id for AudioPolicyService
 #define APS_METH_GET_OUTPUT_FOR_ATTR 1
+#define APS_METH_GET_OUTPUT 2
 
 namespace android {
 

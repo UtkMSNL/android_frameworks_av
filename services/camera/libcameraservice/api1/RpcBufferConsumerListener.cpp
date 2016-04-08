@@ -17,22 +17,28 @@ static sp<GraphicBuffer> mBufferSlot[BufferQueue::NUM_BUFFER_SLOTS];
 
 static bool isFirst = true;
 
+#define ALIGN_UP(x, a)    (((x) + (a) - 1) & ~((a) - 1))
+#define ALIGN_TO_8KB(x)   ((((x) + (1 << 13) - 1) >> 13) << 13)
+#define ALIGN_TO_128B(x)  ((((x) + (1 <<  7) - 1) >>  7) <<  7)
+#define ALIGN_TO_32B(x)   ((((x) + (1 <<  5) - 1) >>  5) <<  5)
 static void* prvthLoop(void* args)
 {
     while (true) {
-        pthread_mutex_lock(&lock);
+    //struct timeval startLoop;
+    //gettimeofday(&startLoop, NULL);
+    
         // get an available buffer from the camera preview
         BufferQueue::BufferItem* item = new BufferQueue::BufferItem();
         status_t err = consumer->acquireBuffer(item, 0);
         if (err != OK) {
+            pthread_mutex_lock(&lock);
             pthread_cond_wait(&cond, &lock);
             pthread_mutex_unlock(&lock);
             continue;
         }
-        pthread_mutex_unlock(&lock);
         
         err = item->mFence->waitForever("RpcBufferConsumerListener::onFrameAvailable");
-        ALOGE("a buffer item is available after wait %p, %d, %d", item->mFence.get(), item->mBuf, BufferQueueDefs::NUM_BUFFER_SLOTS);
+        //ALOGE("a buffer item is available after wait %p, %d, %d", item->mFence.get(), item->mBuf, BufferQueueDefs::NUM_BUFFER_SLOTS);
         if (err != OK) {
             ALOGW("failed to wait for buffer fence: %d", err);
             // keep going
@@ -59,20 +65,30 @@ static void* prvthLoop(void* args)
         // FIXME: set the bytes per pixel through the pixel format
         const size_t bpp = 1;
         const size_t bpr = stride * bpp;
-        const size_t size = bpr * height + ((bpr + 1) / 2) * ((height + 1) / 2) * 2;
+        //const size_t bpr = width * bpp;
+        //const size_t size = bpr * height + ((bpr + 1) / 2) * ((height + 1) / 2) * 2;
+        // for samsung TODO: find out its size for this pixel format
+        size_t size = ALIGN_UP(ALIGN_UP(width, 16) * ALIGN_UP(height, 16), 2048);
+        size = size + ALIGN_UP(ALIGN_UP(width, 16) * ALIGN_UP(height >> 1, 8), 2048);
         //format = 0x11c;
         refreshPreviewWindow(src_bits, size, width, height, stride, format, usage);
         if (src_bits)
             src->unlock();
 
-        ALOGI("a buffer item is available with data size[%d], width[%d], height[%d], format[%#x]", size, width, height, format);
+        //ALOGI("a buffer item is available with data size[%d], width[%d], height[%d], format[%#x]", size, width, height, format);
         // release the prevew buffer
         err = consumer->releaseBuffer(buf, frameNumber, EGL_NO_DISPLAY, EGL_NO_SYNC_KHR, fence);
         ALOGE_IF(err, "error release buffer %s, err, %d", strerror(-err), err);
+        
+    //struct timeval finishLoop;
+    //gettimeofday(&finishLoop, NULL);
+       // u8 timerate = (finishLoop.tv_sec - startLoop.tv_sec) * 1000000 + (finishLoop.tv_usec - startLoop.tv_usec);
+       // ALOGE("[fps evaluation], per frame processing time: %lld", timerate);
     }
     return NULL;
 }
 
+static struct timeval perFrameLastTime;
 void RpcBufferConsumerListener::onFrameAvailable(const BufferItem& /*item*/)
 {
     if (isFirst) {
@@ -86,6 +102,11 @@ void RpcBufferConsumerListener::onFrameAvailable(const BufferItem& /*item*/)
     consumer = mConsumer;
     pthread_cond_signal(&cond);
     pthread_mutex_unlock(&lock);
+        /*struct timeval finish;
+        gettimeofday(&finish, NULL);
+        u8 timerate = (finish.tv_sec - perFrameLastTime.tv_sec) * 1000000 + (finish.tv_usec - perFrameLastTime.tv_usec);
+        ALOGE("[fps evaluation], time since last frame: %lld", timerate);
+        gettimeofday(&perFrameLastTime, NULL);*/
     
     // this part is moved into a thread because the samsumg phone have the problem
     // the problem is that: after calling graphicBuffer->lock(), the data content in the BufferItem is changed

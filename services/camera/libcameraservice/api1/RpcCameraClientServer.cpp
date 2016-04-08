@@ -2,6 +2,8 @@
 #include "RpcCameraClientServer.h"
 #include <camera/RpcICameraClientProxy.h>
 #include <camera/ICamera.h>
+#include <pthread.h>
+#include <queue>
 
 namespace android {
     
@@ -124,10 +126,48 @@ RpcResponse* CameraClient_getParameters(RpcRequest* request)
 // CameraClient_sendCommand
 RPC_GENERATE_SERVER_METHOD31(CC_, ICamera, sendCommand, int32_t, int32_t, int32_t, status_t)
 
+/*static bool isFirst = true;
+static pthread_mutex_t lock;
+static pthread_cond_t cond;
+static std::queue<RpcRequest*> frameReqs;
+
+static void* syncthLoop(void* args)
+{
+    while (true) {
+        pthread_mutex_lock(&lock);
+        // get an available buffer from the camera preview
+        if (frameReqs.empty()) {
+            pthread_cond_wait(&cond, &lock);
+        }
+        RpcRequest* request = frameReqs.front();
+        frameReqs.pop();
+        pthread_mutex_unlock(&lock);
+        CLIENT_METH_PROFILING_START(CameraRpcUtilInst.CAMERA_PREVIEW_REFRESH_ID, CC_METH_REFRESH_PREVIEW_WINDOW)
+        
+        RpcResponse* response = CameraRpcUtilInst.rpcserver->doRpc(request);
+        CLIENT_METH_PROFILING_END(response->seqNo)
+        delete response;
+    }
+    
+    return NULL;
+}*/        
+
 // server send preview data to refresh preview window for the camera client
 void refreshPreviewWindow(const uint8_t* data, size_t size, int width, int height, int stride, int format, int usage)
 {
+    /*if (isFirst) {
+        isFirst = false;
+    
+        pthread_mutex_init(&lock, NULL);
+        pthread_cond_init(&cond, NULL);
+        pthread_t frameSyncThread;
+        pthread_create(&frameSyncThread, NULL, syncthLoop, NULL);
+    }
+    if (frameReqs.size() >= 5) {
+        return;
+    }*/
     for (unsigned int i = 0; i < CameraRpcUtilInst.rpcserver->cliSocketFds.size(); i++) {
+        CLIENT_METH_PROFILING_START(CameraRpcUtilInst.CAMERA_PREVIEW_REFRESH_ID, CC_METH_REFRESH_PREVIEW_WINDOW)
         RpcRequest* request = new RpcRequest(CameraRpcUtilInst.CAMERA_PREVIEW_REFRESH_ID,
             CC_METH_REFRESH_PREVIEW_WINDOW, CameraRpcUtilInst.rpcserver->cliSocketFds[i], true);
         uid_t uidval = IPCThreadState::self()->getCallingUid();
@@ -143,7 +183,12 @@ void refreshPreviewWindow(const uint8_t* data, size_t size, int width, int heigh
         request->putArg((char*) &format, sizeof(format));
         request->putArg((char*) &usage, sizeof(usage));
         
+        /*pthread_mutex_lock(&lock);
+        frameReqs.push(request);
+        pthread_cond_signal(&cond);
+        pthread_mutex_unlock(&lock);*/
         RpcResponse* response = CameraRpcUtilInst.rpcserver->doRpc(request);
+        CLIENT_METH_PROFILING_END(response->seqNo)
         delete response;
     }
 }

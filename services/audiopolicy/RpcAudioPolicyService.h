@@ -51,7 +51,8 @@ public:
                                         audio_channel_mask_t channelMask = 0,
                                         audio_output_flags_t flags =
                                                 AUDIO_OUTPUT_FLAG_NONE,
-                                        const audio_offload_info_t *offloadInfo = NULL) { return -1; }
+                                        const audio_offload_info_t *offloadInfo = NULL);
+                                        
     virtual status_t getOutputForAttr(const audio_attributes_t *attr,
                                       audio_io_handle_t *output,
                                       audio_session_t session,

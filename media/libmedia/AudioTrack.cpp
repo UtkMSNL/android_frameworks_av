@@ -319,6 +319,7 @@ bool AudioTrack::canOffloadTrack(
               transferType, offloadInfo);
         return false;
 }
+int firstWrite = 1; // used for first sync time profiling
 status_t AudioTrack::set(
         audio_stream_type_t streamType,
         uint32_t sampleRate,
@@ -338,6 +339,7 @@ status_t AudioTrack::set(
         pid_t pid,
         const audio_attributes_t* pAttributes)
 {
+    firstWrite = 1;
     //ALOGV("set(): streamType %d, sampleRate %u, format %#x, channelMask %#x, frameCount %zu, "
     ALOGE("for audio test, set(): streamType %d, sampleRate %u, format %#x, channelMask %#x, frameCount %zu, "
           "flags #%x, notificationFrames %u, sessionId %d, transferType %d",
@@ -1736,7 +1738,7 @@ status_t AudioTrack::obtainBuffer(Buffer* audioBuffer, const struct timespec *re
 
     audioBuffer->frameCount = buffer.mFrameCount;
     audioBuffer->size = buffer.mFrameCount * mFrameSizeAF;
-    ALOGE("for audio test, the request buffer count is: %d, size is: %d", buffer.mFrameCount, audioBuffer->size);
+    //ALOGE("rpc audio service for audio test, the request buffer count is: %d, size is: %d", buffer.mFrameCount, audioBuffer->size);
     audioBuffer->raw = buffer.mRaw;
     if (nonContig != NULL) {
         *nonContig = buffer.mNonContig;
@@ -1786,6 +1788,12 @@ void AudioTrack::releaseBuffer(Buffer* audioBuffer)
 
 ssize_t AudioTrack::write(const void* buffer, size_t userSize, bool blocking)
 {
+    if (firstWrite) {
+        gettimeofday(&audioStartTime, NULL);
+        firstWrite = 0;
+    }
+    struct timeval writeStart;
+    gettimeofday(&writeStart, NULL);
 #ifdef QCOM_DIRECTTRACK
     if (mDirectTrack != NULL) {
         ssize_t written = 0;
@@ -1850,8 +1858,12 @@ ssize_t AudioTrack::write(const void* buffer, size_t userSize, bool blocking)
         releaseBuffer(&audioBuffer);
     }
     gettimeofday(&finish, NULL);
-     ALOGE("rpc audio service the time for data writing %ld", (finish.tv_sec - start.tv_sec) * 1000000 + finish.tv_usec - start.tv_usec);
+    // ALOGE("rpc audio service the time for data writing %ld", (finish.tv_sec - start.tv_sec) * 1000000 + finish.tv_usec - start.tv_usec);
 
+    struct timeval writeFinish;
+    gettimeofday(&writeFinish, NULL);
+    u8 totalWriteTime = (writeFinish.tv_sec - writeStart.tv_sec) * 1000000 + writeFinish.tv_usec - writeStart.tv_usec;
+    ALOGE("[rpc evaluation], audio servie audio write total: %lld", totalWriteTime);
     return written;
 }
 

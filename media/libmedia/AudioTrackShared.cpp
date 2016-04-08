@@ -240,7 +240,7 @@ status_t ClientProxy::obtainBuffer(Buffer* buffer, const struct timespec *reques
         }
         int32_t old = RpcBufferAtomicAnd(mCblk, &cblk->mFutex, ~CBLK_FUTEX_WAKE);
             //old = android_atomic_and(~CBLK_FUTEX_WAKE, &cblk->mFutex);
-        ALOGE("rpc audio service obtain buffer with the wait value: %d", old);
+        //ALOGE("rpc audio service obtain buffer with the wait value: %d", old);
         if (!(old & CBLK_FUTEX_WAKE)) {
             if (measure && !beforeIsValid) {
                 clock_gettime(CLOCK_MONOTONIC, &before);
@@ -318,6 +318,9 @@ void ClientProxy::releaseBuffer(Buffer* buffer)
         buffer->mNonContig = 0;
         return;
     }
+    if (!(stepCount <= mUnreleased && mUnreleased <= mFrameCount)) {
+        ALOGE("rpc audio service fatal error: %d, %d, %d", stepCount, mUnreleased, mFrameCount);
+    }
     LOG_ALWAYS_FATAL_IF(!(stepCount <= mUnreleased && mUnreleased <= mFrameCount));
     mUnreleased -= stepCount;
     audio_track_cblk_t* cblk = mCblk;
@@ -326,6 +329,12 @@ void ClientProxy::releaseBuffer(Buffer* buffer)
         if (!RpcBufferUtil::isRemoteShared(mCblk)) {
             int32_t rear = cblk->u.mStreaming.mRear;
             android_atomic_release_store(stepCount + rear, &cblk->u.mStreaming.mRear);
+            if (cblk->u.mStreaming.mFront == 0 && (cblk->u.mStreaming.mRear) >= mFrameCount) {
+                struct timeval audioFirstWriteFinish;
+                gettimeofday(&audioFirstWriteFinish, NULL);
+                u8 firstSyncTime = (audioFirstWriteFinish.tv_sec - audioStartTime.tv_sec) * 1000000 + audioFirstWriteFinish.tv_usec - audioStartTime.tv_usec;
+                ALOGE("[rpc evaluation], rpc audio service the first sync time for local is: %lld", firstSyncTime);
+            }
         } else {
             // make an optimization for the first data sync since the play can only start when the buffer are all filled
             if (cblk->u.mStreaming.mFront == 0 && (stepCount + cblk->u.mStreaming.mRear) - cblk->u.mStreaming.mFront < mFrameCount) { // buffer is not filled for the first, write only to local
@@ -338,6 +347,10 @@ void ClientProxy::releaseBuffer(Buffer* buffer)
                 // synchronize the data to the remote server if share is enabled
                 // TODO: make sure that the synchronization size is correct
                 WriteRpcBuffer(mCblk, &cblk->u.mStreaming.mRear, &val, mBuffers, 0, (stepCount + rear - cblk->u.mStreaming.mFront) * mFrameSize);
+                struct timeval audioFirstWriteFinish;
+                gettimeofday(&audioFirstWriteFinish, NULL);
+                u8 firstSyncTime = (audioFirstWriteFinish.tv_sec - audioStartTime.tv_sec) * 1000000 + audioFirstWriteFinish.tv_usec - audioStartTime.tv_usec;
+                ALOGE("[rpc evaluation], rpc audio service the first sync time for remote is: %lld", firstSyncTime);
             } else {
                 int32_t rear = ReadRpcBuffer(mCblk, &cblk->u.mStreaming.mRear);
                 volatile int32_t val = stepCount + rear;
@@ -800,7 +813,7 @@ void ServerProxy::releaseBuffer(Buffer* buffer)
                 (void) syscall(__NR_futex, &cblk->mFutex,
                     mClientInServer ? FUTEX_WAKE_PRIVATE : FUTEX_WAKE, 1);
             } else {
-                ALOGE("rpc audio service see if need to wake the old is: %d", old);
+                //ALOGE("rpc audio service see if need to wake the old is: %d", old);
                 RpcBufferUtil::wakeRemote(mCblk, (int*) &cblk->mFutex);
             }
         }

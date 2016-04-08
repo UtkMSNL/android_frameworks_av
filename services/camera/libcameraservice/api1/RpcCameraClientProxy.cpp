@@ -3,6 +3,8 @@
 #include <gui/BufferQueue.h>
 #include <camera/RpcICameraClientServer.h>
 
+#include "time.h" 
+
 // method id for Camera Service
 #define CC_METH_REFRESH_PREVIEW_WINDOW 1
 
@@ -145,8 +147,11 @@ status_t RpcCameraClientProxy::sendCommand(int32_t cmd, int32_t arg1, int32_t ar
     RPC_CLIENT_FUNC31(mRemoteServiceId, CC_METH_SEND_COMMAND, cmd, arg1, arg2, status_t)
 }
 
+u4 receivedFrames = 0;
+static struct timeval lastTime;
 // client receive preview data to refresh preview window
 RpcResponse* CameraClient_refreshPreviewWindow(RpcRequest* request) {
+    SERVER_METH_PROFILING_START(request->seqNo)
     RPC_SERVER_REQUEST_COMMON()
     
     size_t size;
@@ -205,7 +210,7 @@ RpcResponse* CameraClient_refreshPreviewWindow(RpcRequest* request) {
         const size_t bpp = 1;
         const size_t bpr = stride * bpp;
         memcpy(dst_bits, data, size);
-        ALOGE("rpc camera service copied data: width[%d], height[%d], stride[%d], format[%d], usage[%d]", width, height, stride, format, usage);
+        //ALOGI("rpc camera service copied data: width[%d], height[%d], stride[%d], format[%d], usage[%d]", width, height, stride, format, usage);
     }
     if (dst_bits)
         dst->unlock();
@@ -224,6 +229,20 @@ RpcResponse* CameraClient_refreshPreviewWindow(RpcRequest* request) {
     if (err != OK)  {
         ALOGE("rpc camera service queueBuffer: error queuing buffer, %d", err);
     }
+    // code for profiling
+    if (receivedFrames == 0) {
+        gettimeofday(&lastTime, NULL);
+    }
+    receivedFrames++;
+    if (receivedFrames > 0 && receivedFrames % 1000 == 0) {
+        struct timeval finish;
+        gettimeofday(&finish, NULL);
+        double secs = (double) ((finish.tv_sec - lastTime.tv_sec) + (finish.tv_usec - lastTime.tv_usec) * 0.000001);
+        ALOGE("[rpc evaluation], achieved fps for camera is: %f, width: %d, height: %d, size: %d", (1000 / secs), width, height, size);
+        lastTime = finish;
+    }
+    
+    SERVER_METH_PROFILING_END(request->seqNo)
     return response;
 }
 
